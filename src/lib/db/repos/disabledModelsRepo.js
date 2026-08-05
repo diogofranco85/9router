@@ -1,56 +1,50 @@
-import { getAdapter } from "../driver.js";
-import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { getPrisma } from "../client.js";
+import { asJson } from "../helpers/dates.js";
+import { upsertKv } from "../helpers/kvStore.js";
 
 const SCOPE = "disabledModels";
 
 export async function getDisabledModels() {
-  const db = await getAdapter();
-  const rows = db.all(`SELECT key, value FROM kv WHERE scope = ?`, [SCOPE]);
+  const prisma = await getPrisma();
+  const rows = await prisma.kv.findMany({ where: { scope: SCOPE } });
   const out = {};
-  for (const r of rows) out[r.key] = parseJson(r.value, []);
+  for (const r of rows) out[r.key] = asJson(r.value, []);
   return out;
 }
 
 export async function getDisabledByProvider(providerAlias) {
-  const db = await getAdapter();
-  const row = db.get(`SELECT value FROM kv WHERE scope = ? AND key = ?`, [SCOPE, providerAlias]);
-  return row ? (parseJson(row.value, []) || []) : [];
+  const prisma = await getPrisma();
+  const row = await prisma.kv.findFirst({ where: { scope: SCOPE, key: providerAlias } });
+  return row ? (asJson(row.value, []) || []) : [];
 }
 
-// Atomic read-merge-write inside a transaction (no JS yield mid-transaction).
 export async function disableModels(providerAlias, ids) {
   if (!providerAlias || !Array.isArray(ids)) return;
-  const db = await getAdapter();
-  db.transaction(() => {
-    const row = db.get(`SELECT value FROM kv WHERE scope = ? AND key = ?`, [SCOPE, providerAlias]);
-    const current = row ? (parseJson(row.value, []) || []) : [];
+  const prisma = await getPrisma();
+  await prisma.$transaction(async (tx) => {
+    const row = await tx.kv.findFirst({ where: { scope: SCOPE, key: providerAlias } });
+    const current = row ? (asJson(row.value, []) || []) : [];
     const merged = [...new Set([...current, ...ids])];
-    db.run(
-      `INSERT INTO kv(scope, key, value) VALUES(?, ?, ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`,
-      [SCOPE, providerAlias, stringifyJson(merged)]
-    );
+    await upsertKv(tx, SCOPE, providerAlias, merged);
   });
 }
 
 export async function enableModels(providerAlias, ids) {
   if (!providerAlias) return;
-  const db = await getAdapter();
-  db.transaction(() => {
+  const prisma = await getPrisma();
+  await prisma.$transaction(async (tx) => {
     if (!Array.isArray(ids) || ids.length === 0) {
-      db.run(`DELETE FROM kv WHERE scope = ? AND key = ?`, [SCOPE, providerAlias]);
+      await tx.kv.deleteMany({ where: { scope: SCOPE, key: providerAlias } });
       return;
     }
-    const row = db.get(`SELECT value FROM kv WHERE scope = ? AND key = ?`, [SCOPE, providerAlias]);
-    const current = row ? (parseJson(row.value, []) || []) : [];
+    const row = await tx.kv.findFirst({ where: { scope: SCOPE, key: providerAlias } });
+    const current = row ? (asJson(row.value, []) || []) : [];
     const removeSet = new Set(ids);
     const next = current.filter((id) => !removeSet.has(id));
     if (next.length === 0) {
-      db.run(`DELETE FROM kv WHERE scope = ? AND key = ?`, [SCOPE, providerAlias]);
+      await tx.kv.deleteMany({ where: { scope: SCOPE, key: providerAlias } });
     } else {
-      db.run(
-        `INSERT INTO kv(scope, key, value) VALUES(?, ?, ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`,
-        [SCOPE, providerAlias, stringifyJson(next)]
-      );
+      await upsertKv(tx, SCOPE, providerAlias, next);
     }
   });
 }

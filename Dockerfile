@@ -8,12 +8,16 @@ FROM base AS builder
 RUN apk --no-cache upgrade && apk --no-cache add python3 make g++ linux-headers
 
 COPY package.json ./
+COPY prisma ./prisma
+COPY scripts/prisma-generate.mjs ./scripts/prisma-generate.mjs
+# Dummy URL so prisma generate succeeds at build time (runtime uses real DATABASE_URL)
+ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
 RUN --mount=type=cache,target=/root/.npm \
   npm install
 
 COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+RUN npm run prisma:generate && npm run build
 
 FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
@@ -31,12 +35,17 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/custom-server.js ./custom-server.js
 COPY --from=builder /app/open-sse ./open-sse
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/src/lib/db/generated ./src/lib/db/generated
 # Next file tracing can omit sibling files; MITM runs server.js as a separate process.
 COPY --from=builder /app/src/mitm ./src/mitm
 # Standalone node_modules may omit deps only required by the MITM child process.
 COPY --from=builder /app/node_modules/node-forge ./node_modules/node-forge
 # Ensure `next` is available at runtime in case tracing did not include it.
 COPY --from=builder /app/node_modules/next ./node_modules/next
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
 RUN mkdir -p /app/data && chown -R node:node /app && \
   mkdir -p /app/data-home && chown node:node /app/data-home && \

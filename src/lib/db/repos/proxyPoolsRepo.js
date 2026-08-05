@@ -1,63 +1,63 @@
 import { v4 as uuidv4 } from "uuid";
-import { getAdapter } from "../driver.js";
-import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { getPrisma } from "../client.js";
+import { asObject, toDate, toIso } from "../helpers/dates.js";
 
 function rowToPool(row) {
   if (!row) return null;
-  const extra = parseJson(row.data, {});
+  const extra = asObject(row.data);
   return {
     ...extra,
     id: row.id,
-    isActive: row.isActive === 1 || row.isActive === true,
+    isActive: row.isActive === true,
     testStatus: row.testStatus,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
   };
 }
 
-function poolToRow(p) {
+function poolToData(p) {
   const { id, isActive, testStatus, createdAt, updatedAt, ...rest } = p;
   return {
     id,
-    isActive: isActive === false ? 0 : 1,
+    isActive: isActive !== false,
     testStatus: testStatus ?? null,
-    data: stringifyJson(rest),
-    createdAt,
-    updatedAt,
+    data: rest,
+    createdAt: toDate(createdAt),
+    updatedAt: toDate(updatedAt),
   };
 }
 
-function upsert(db, p) {
-  const r = poolToRow(p);
-  db.run(
-    `INSERT INTO proxyPools(id, isActive, testStatus, data, createdAt, updatedAt)
-     VALUES(?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       isActive=excluded.isActive, testStatus=excluded.testStatus,
-       data=excluded.data, updatedAt=excluded.updatedAt`,
-    [r.id, r.isActive, r.testStatus, r.data, r.createdAt, r.updatedAt]
-  );
+async function upsertPool(tx, p) {
+  const r = poolToData(p);
+  await tx.proxyPool.upsert({
+    where: { id: r.id },
+    create: r,
+    update: {
+      isActive: r.isActive,
+      testStatus: r.testStatus,
+      data: r.data,
+      updatedAt: r.updatedAt,
+    },
+  });
 }
 
 export async function getProxyPools(filter = {}) {
-  const db = await getAdapter();
-  const where = [];
-  const params = [];
-  if (filter.isActive !== undefined) { where.push("isActive = ?"); params.push(filter.isActive ? 1 : 0); }
-  if (filter.testStatus) { where.push("testStatus = ?"); params.push(filter.testStatus); }
-  const sql = `SELECT * FROM proxyPools${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
-  const list = db.all(sql, params).map(rowToPool);
+  const prisma = await getPrisma();
+  const where = {};
+  if (filter.isActive !== undefined) where.isActive = !!filter.isActive;
+  if (filter.testStatus) where.testStatus = filter.testStatus;
+  const list = (await prisma.proxyPool.findMany({ where })).map(rowToPool);
   list.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
   return list;
 }
 
 export async function getProxyPoolById(id) {
-  const db = await getAdapter();
-  return rowToPool(db.get(`SELECT * FROM proxyPools WHERE id = ?`, [id]));
+  const prisma = await getPrisma();
+  return rowToPool(await prisma.proxyPool.findUnique({ where: { id } }));
 }
 
 export async function createProxyPool(data) {
-  const db = await getAdapter();
+  const prisma = await getPrisma();
   const now = new Date().toISOString();
   const pool = {
     id: data.id || uuidv4(),
@@ -73,31 +73,28 @@ export async function createProxyPool(data) {
     createdAt: now,
     updatedAt: now,
   };
-  upsert(db, pool);
+  await upsertPool(prisma, pool);
   return pool;
 }
 
 export async function updateProxyPool(id, data) {
-  const db = await getAdapter();
-  let result = null;
-  db.transaction(() => {
-    const row = db.get(`SELECT * FROM proxyPools WHERE id = ?`, [id]);
-    if (!row) return;
+  const prisma = await getPrisma();
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.proxyPool.findUnique({ where: { id } });
+    if (!row) return null;
     const merged = { ...rowToPool(row), ...data, updatedAt: new Date().toISOString() };
-    upsert(db, merged);
-    result = merged;
+    await upsertPool(tx, merged);
+    return merged;
   });
-  return result;
 }
 
 export async function deleteProxyPool(id) {
-  const db = await getAdapter();
-  let removed = null;
-  db.transaction(() => {
-    const row = db.get(`SELECT * FROM proxyPools WHERE id = ?`, [id]);
-    if (!row) return;
-    removed = rowToPool(row);
-    db.run(`DELETE FROM proxyPools WHERE id = ?`, [id]);
+  const prisma = await getPrisma();
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.proxyPool.findUnique({ where: { id } });
+    if (!row) return null;
+    const removed = rowToPool(row);
+    await tx.proxyPool.delete({ where: { id } });
+    return removed;
   });
-  return removed;
 }

@@ -15,8 +15,40 @@ services:
       HOSTNAME: "0.0.0.0"
       NODE_ENV: production
       HEADROOM_URL: http://headroom:8787
+      DATABASE_PROVIDER: postgres
+      DATABASE_URL: postgresql://9router:9router@postgres:5432/9router
     depends_on:
       - headroom
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: 9router-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: 9router
+      POSTGRES_PASSWORD: 9router
+      POSTGRES_DB: 9router
+    volumes:
+      - 9router-postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # Optional MongoDB alternative (must run as replica set for Prisma):
+  # DATABASE_PROVIDER=mongodb
+  # DATABASE_URL=mongodb://9router:9router@mongo:27017/9router?replicaSet=rs0&authSource=admin
+  # mongo:
+  #   image: mongo:7
+  #   command: ["--replSet", "rs0", "--bind_ip_all"]
+  #   container_name: 9router-mongo
+  #   restart: always
+  #   environment:
+  #     MONGO_INITDB_ROOT_USERNAME: 9router
+  #     MONGO_INITDB_ROOT_PASSWORD: 9router
+  #   volumes:
+  #     - 9router-mongo:/data/db
+  #   ports:
+  #     - "27017:27017"
 
   headroom:
     image: ghcr.io/chopratejas/headroom:latest
@@ -28,3 +60,7 @@ services:
 volumes:
   9router-data:
     name: 9router-data
+  9router-postgres:
+    name: 9router-postgres
+  # 9router-mongo:
+  #   name: 9router-mongo

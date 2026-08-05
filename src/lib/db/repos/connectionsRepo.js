@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
-import { getAdapter } from "../driver.js";
-import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { getPrisma } from "../client.js";
+import { asObject, toDate, toIso } from "../helpers/dates.js";
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
@@ -12,7 +12,7 @@ const OPTIONAL_FIELDS = [
 
 function rowToConn(row) {
   if (!row) return null;
-  const extra = parseJson(row.data, {});
+  const extra = asObject(row.data);
   return {
     ...extra,
     id: row.id,
@@ -21,13 +21,13 @@ function rowToConn(row) {
     name: row.name,
     email: row.email,
     priority: row.priority,
-    isActive: row.isActive === 1 || row.isActive === true,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+    isActive: row.isActive === true,
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
   };
 }
 
-function connToRow(c) {
+function connToData(c) {
   const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
   return {
     id,
@@ -36,24 +36,29 @@ function connToRow(c) {
     name: name ?? null,
     email: email ?? null,
     priority: priority ?? null,
-    isActive: isActive === false ? 0 : 1,
-    data: stringifyJson(rest),
-    createdAt,
-    updatedAt,
+    isActive: isActive !== false,
+    data: rest,
+    createdAt: toDate(createdAt),
+    updatedAt: toDate(updatedAt),
   };
 }
 
-function upsert(db, c) {
-  const r = connToRow(c);
-  db.run(
-    `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt)
-     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       provider=excluded.provider, authType=excluded.authType, name=excluded.name,
-       email=excluded.email, priority=excluded.priority, isActive=excluded.isActive,
-       data=excluded.data, updatedAt=excluded.updatedAt`,
-    [r.id, r.provider, r.authType, r.name, r.email, r.priority, r.isActive, r.data, r.createdAt, r.updatedAt]
-  );
+async function upsertConn(tx, c) {
+  const r = connToData(c);
+  await tx.providerConnection.upsert({
+    where: { id: r.id },
+    create: r,
+    update: {
+      provider: r.provider,
+      authType: r.authType,
+      name: r.name,
+      email: r.email,
+      priority: r.priority,
+      isActive: r.isActive,
+      data: r.data,
+      updatedAt: r.updatedAt,
+    },
+  });
 }
 
 function deriveConnectionName(data, fallbackName) {
@@ -67,73 +72,61 @@ function deriveConnectionName(data, fallbackName) {
   return fallbackName;
 }
 
+async function reorderInTx(tx, providerId) {
+  const list = (await tx.providerConnection.findMany({ where: { provider: providerId } }))
+    .map(rowToConn);
+  list.sort((a, b) => {
+    const pDiff = (a.priority || 0) - (b.priority || 0);
+    if (pDiff !== 0) return pDiff;
+    return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+  });
+  for (let i = 0; i < list.length; i++) {
+    await tx.providerConnection.update({
+      where: { id: list[i].id },
+      data: { priority: i + 1 },
+    });
+  }
+}
+
 export async function getProviderConnections(filter = {}) {
-  const db = await getAdapter();
-  const where = [];
-  const params = [];
-  if (filter.provider) { where.push("provider = ?"); params.push(filter.provider); }
-  if (filter.isActive !== undefined) { where.push("isActive = ?"); params.push(filter.isActive ? 1 : 0); }
-  const sql = `SELECT * FROM providerConnections${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
-  const rows = db.all(sql, params);
+  const prisma = await getPrisma();
+  const where = {};
+  if (filter.provider) where.provider = filter.provider;
+  if (filter.isActive !== undefined) where.isActive = !!filter.isActive;
+  const rows = await prisma.providerConnection.findMany({ where });
   const list = rows.map(rowToConn);
   list.sort((a, b) => (a.priority || 999) - (b.priority || 999));
   return list;
 }
 
 export async function getProviderConnectionById(id) {
-  const db = await getAdapter();
-  const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
+  const prisma = await getPrisma();
+  const row = await prisma.providerConnection.findUnique({ where: { id } });
   return rowToConn(row);
 }
 
-// Internal sync reorder — must be called INSIDE a transaction
-function reorderInTx(db, providerId) {
-  const list = db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [providerId]).map(rowToConn);
-  list.sort((a, b) => {
-    const pDiff = (a.priority || 0) - (b.priority || 0);
-    if (pDiff !== 0) return pDiff;
-    return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
-  });
-  list.forEach((c, i) => {
-    db.run(`UPDATE providerConnections SET priority = ? WHERE id = ?`, [i + 1, c.id]);
-  });
-}
-
 export async function createProviderConnection(data) {
-  const db = await getAdapter();
+  const prisma = await getPrisma();
   const now = new Date().toISOString();
-  let result;
 
-  db.transaction(() => {
-    const all = db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [data.provider]).map(rowToConn);
+  return prisma.$transaction(async (tx) => {
+    const all = (await tx.providerConnection.findMany({ where: { provider: data.provider } }))
+      .map(rowToConn);
 
     let existing = null;
     if (data.authType === "oauth" && data.email) {
       const incomingUsername = data.providerSpecificData?.username;
       const incomingWs = data.providerSpecificData?.chatgptAccountId;
-      existing = all.find(c => {
+      existing = all.find((c) => {
         if (c.authType !== "oauth" || c.email !== data.email) return false;
-
-        // Codex/OpenAI can issue multiple OAuth grants for the same email.
-        // Refresh tokens are rotated single-use; collapsing a new login onto an
-        // existing bare-email row overwrites the first account's token pair and
-        // makes it look "invalid" after adding a second account. Only update an
-        // existing Codex row when both rows expose the same ChatGPT account ID.
         if (data.provider === "codex") {
           const existingWs = c.providerSpecificData?.chatgptAccountId;
           return !!incomingWs && !!existingWs && incomingWs === existingWs;
         }
-
-        // Workspace providers use workspace ID when both sides have it
         const existingWs = c.providerSpecificData?.chatgptAccountId;
         if (incomingWs && existingWs) return incomingWs === existingWs;
         if (incomingWs && !existingWs) return false;
         if (!incomingWs && existingWs) return false;
-        // Non-workspace providers: match on (email + username) so cross-IdP
-        // accounts don't overwrite each other. Require username on both sides
-        // — if only one side has it, treat as a distinct identity rather than
-        // collapsing onto the bare-email fallback (which would re-introduce
-        // the cross-IdP overwrite).
         const existingUsername = c.providerSpecificData?.username;
         if (incomingUsername && existingUsername) {
           return incomingUsername === existingUsername;
@@ -142,15 +135,13 @@ export async function createProviderConnection(data) {
         return true;
       });
     } else if (data.authType === "apikey" && data.name) {
-      existing = all.find(c => c.authType === "apikey" && c.name === data.name);
+      existing = all.find((c) => c.authType === "apikey" && c.name === data.name);
     }
-    // access_token: never dedup — user manages duplicates manually
 
     if (existing) {
       const merged = { ...existing, ...data, updatedAt: now };
-      upsert(db, merged);
-      result = merged;
-      return;
+      await upsertConn(tx, merged);
+      return merged;
     }
 
     let connectionName = data.name || null;
@@ -180,57 +171,51 @@ export async function createProviderConnection(data) {
     }
     if (data.email !== undefined) conn.email = data.email;
 
-    upsert(db, conn);
-    reorderInTx(db, data.provider);
-    result = conn;
+    await upsertConn(tx, conn);
+    await reorderInTx(tx, data.provider);
+    return conn;
   });
-
-  return result;
 }
 
-// Critical: OAuth refresh token race — atomic merge inside transaction
 export async function updateProviderConnection(id, data) {
-  const db = await getAdapter();
-  let result;
-  db.transaction(() => {
-    const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
-    if (!row) { result = null; return; }
+  const prisma = await getPrisma();
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.providerConnection.findUnique({ where: { id } });
+    if (!row) return null;
     const existing = rowToConn(row);
     const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
-    upsert(db, merged);
-    if (data.priority !== undefined) reorderInTx(db, existing.provider);
-    result = merged;
+    await upsertConn(tx, merged);
+    if (data.priority !== undefined) await reorderInTx(tx, existing.provider);
+    return merged;
   });
-  return result;
 }
 
 export async function deleteProviderConnection(id) {
-  const db = await getAdapter();
-  let ok = false;
-  db.transaction(() => {
-    const row = db.get(`SELECT provider FROM providerConnections WHERE id = ?`, [id]);
-    if (!row) return;
-    db.run(`DELETE FROM providerConnections WHERE id = ?`, [id]);
-    reorderInTx(db, row.provider);
-    ok = true;
+  const prisma = await getPrisma();
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.providerConnection.findUnique({ where: { id } });
+    if (!row) return false;
+    await tx.providerConnection.delete({ where: { id } });
+    await reorderInTx(tx, row.provider);
+    return true;
   });
-  return ok;
 }
 
 export async function deleteProviderConnectionsByProvider(providerId) {
-  const db = await getAdapter();
-  const before = db.get(`SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ?`, [providerId]);
-  db.run(`DELETE FROM providerConnections WHERE provider = ?`, [providerId]);
-  return before?.n || 0;
+  const prisma = await getPrisma();
+  const result = await prisma.providerConnection.deleteMany({ where: { provider: providerId } });
+  return result.count;
 }
 
 export async function reorderProviderConnections(providerId) {
-  const db = await getAdapter();
-  db.transaction(() => reorderInTx(db, providerId));
+  const prisma = await getPrisma();
+  await prisma.$transaction(async (tx) => {
+    await reorderInTx(tx, providerId);
+  });
 }
 
 export async function cleanupProviderConnections() {
-  const db = await getAdapter();
+  const prisma = await getPrisma();
   const fieldsToCheck = [
     "displayName", "email", "globalPriority", "defaultModel",
     "accessToken", "refreshToken", "expiresAt", "tokenType",
@@ -238,9 +223,9 @@ export async function cleanupProviderConnections() {
     "lastTested", "lastError", "lastErrorAt", "rateLimitedUntil", "expiresIn",
     "consecutiveUseCount",
   ];
-  let cleaned = 0;
-  db.transaction(() => {
-    const rows = db.all(`SELECT * FROM providerConnections`);
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.providerConnection.findMany();
+    let cleaned = 0;
     for (const row of rows) {
       const conn = rowToConn(row);
       let dirty = false;
@@ -254,8 +239,8 @@ export async function cleanupProviderConnections() {
         cleaned++;
         dirty = true;
       }
-      if (dirty) upsert(db, conn);
+      if (dirty) await upsertConn(tx, conn);
     }
+    return cleaned;
   });
-  return cleaned;
 }
