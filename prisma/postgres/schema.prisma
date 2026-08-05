@@ -141,3 +141,17 @@ model RequestDetail {
   @@index([connectionId])
   @@map("requestDetails")
 }
+
+model ChatSession {
+  id           String   @id
+  title        String   @default("New chat")
+  mode         String?
+  requestModel String?
+  modelLabel   String?
+  messages     Json
+  createdAt    DateTime
+  updatedAt    DateTime
+
+  @@index([updatedAt(sort: Desc)])
+  @@map("chatSessions")
+}
