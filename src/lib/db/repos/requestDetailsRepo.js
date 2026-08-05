@@ -1,5 +1,5 @@
-import { getAdapter } from "../driver.js";
-import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { getPrisma } from "../client.js";
+import { asObject, toDate, toIso } from "../helpers/dates.js";
 
 const DEFAULT_MAX_RECORDS = 200;
 const DEFAULT_BATCH_SIZE = 20;
@@ -88,13 +88,12 @@ async function flushToDatabase() {
   if (writeBuffer.length === 0) return;
   isFlushing = true;
   try {
-    // Drain entire buffer (loop in case more pushed during await)
     while (writeBuffer.length > 0) {
       const items = writeBuffer.splice(0, writeBuffer.length);
-      const db = await getAdapter();
+      const prisma = await getPrisma();
       const config = await getObservabilityConfig();
 
-      db.transaction(() => {
+      await prisma.$transaction(async (tx) => {
         for (const item of items) {
           if (!item.id) item.id = generateDetailId(item.model);
           if (!item.timestamp) item.timestamp = new Date().toISOString();
@@ -116,18 +115,40 @@ async function flushToDatabase() {
             pxpipe: item.pxpipe || undefined,
           };
 
-          db.run(
-            `INSERT INTO requestDetails(id, timestamp, provider, model, connectionId, status, data) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, provider = excluded.provider, model = excluded.model, connectionId = excluded.connectionId, status = excluded.status, data = excluded.data`,
-            [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record)]
-          );
+          await tx.requestDetail.upsert({
+            where: { id: record.id },
+            create: {
+              id: record.id,
+              timestamp: toDate(record.timestamp),
+              provider: record.provider,
+              model: record.model,
+              connectionId: record.connectionId,
+              status: record.status,
+              data: record,
+            },
+            update: {
+              timestamp: toDate(record.timestamp),
+              provider: record.provider,
+              model: record.model,
+              connectionId: record.connectionId,
+              status: record.status,
+              data: record,
+            },
+          });
         }
 
-        const cnt = db.get(`SELECT COUNT(*) as c FROM requestDetails`);
-        if (cnt && cnt.c > config.maxRecords) {
-          db.run(
-            `DELETE FROM requestDetails WHERE id IN (SELECT id FROM requestDetails ORDER BY timestamp ASC LIMIT ?)`,
-            [cnt.c - config.maxRecords]
-          );
+        const cnt = await tx.requestDetail.count();
+        if (cnt > config.maxRecords) {
+          const toDelete = await tx.requestDetail.findMany({
+            orderBy: { timestamp: "asc" },
+            take: cnt - config.maxRecords,
+            select: { id: true },
+          });
+          if (toDelete.length) {
+            await tx.requestDetail.deleteMany({
+              where: { id: { in: toDelete.map((r) => r.id) } },
+            });
+          }
         }
       });
     }
@@ -140,12 +161,10 @@ async function flushToDatabase() {
 
 export async function saveRequestDetail(detail) {
   const config = await getObservabilityConfig();
-  if (!config.enabled) {return;}
+  if (!config.enabled) { return; }
 
   writeBuffer.push(detail);
 
-  // Trigger immediate flush if batch threshold reached.
-  // flushToDatabase() drains entire buffer in a loop, so all pushes during await are persisted.
   if (writeBuffer.length >= config.batchSize) {
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
     flushToDatabase().catch((e) => console.error("[requestDetailsRepo] flush err:", e));
@@ -158,31 +177,33 @@ export async function saveRequestDetail(detail) {
 }
 
 export async function getRequestDetails(filter = {}) {
-  const db = await getAdapter();
-  const conds = [];
-  const params = [];
+  const prisma = await getPrisma();
+  const where = {};
 
-  if (filter.provider) { conds.push("provider = ?"); params.push(filter.provider); }
-  if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
-  if (filter.connectionId) { conds.push("connectionId = ?"); params.push(filter.connectionId); }
-  if (filter.status) { conds.push("status = ?"); params.push(filter.status); }
-  if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
-  if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
+  if (filter.provider) where.provider = filter.provider;
+  if (filter.model) where.model = filter.model;
+  if (filter.connectionId) where.connectionId = filter.connectionId;
+  if (filter.status) where.status = filter.status;
+  if (filter.startDate || filter.endDate) {
+    where.timestamp = {};
+    if (filter.startDate) where.timestamp.gte = toDate(filter.startDate);
+    if (filter.endDate) where.timestamp.lte = toDate(filter.endDate);
+  }
 
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const cntRow = db.get(`SELECT COUNT(*) as c FROM requestDetails ${where}`, params);
-  const totalItems = cntRow ? cntRow.c : 0;
-
+  const totalItems = await prisma.requestDetail.count({ where });
   const page = filter.page || 1;
   const pageSize = filter.pageSize || 50;
-  const totalPages = Math.ceil(totalItems / pageSize);
-  const offset = (page - 1) * pageSize;
+  const totalPages = Math.ceil(totalItems / pageSize) || 0;
+  const skip = (page - 1) * pageSize;
 
-  const rows = db.all(
-    `SELECT data FROM requestDetails ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
-    [...params, pageSize, offset]
-  );
-  const details = rows.map((r) => parseJson(r.data, {}));
+  const rows = await prisma.requestDetail.findMany({
+    where,
+    orderBy: { timestamp: "desc" },
+    take: pageSize,
+    skip,
+    select: { data: true },
+  });
+  const details = rows.map((r) => asObject(r.data));
 
   return {
     details,
@@ -191,15 +212,17 @@ export async function getRequestDetails(filter = {}) {
 }
 
 export async function getDistinctProviders() {
-  const db = await getAdapter();
-  const rows = db.all(`SELECT DISTINCT provider FROM requestDetails WHERE provider IS NOT NULL ORDER BY provider ASC`);
-  return rows.map((r) => r.provider);
+  const prisma = await getPrisma();
+  const rows = await prisma.requestDetail.findMany({
+    select: { provider: true },
+  });
+  return [...new Set(rows.map((r) => r.provider).filter(Boolean))].sort();
 }
 
 export async function getRequestDetailById(id) {
-  const db = await getAdapter();
-  const row = db.get(`SELECT data FROM requestDetails WHERE id = ?`, [id]);
-  return row ? parseJson(row.data, null) : null;
+  const prisma = await getPrisma();
+  const row = await prisma.requestDetail.findUnique({ where: { id } });
+  return row ? asObject(row.data) : null;
 }
 
 const _shutdownHandler = async () => {

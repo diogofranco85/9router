@@ -74,10 +74,9 @@ Two authoritative docs already exist — read them before working in these areas
 - Add a provider: copy `providers/REGISTRY_TEMPLATE.js`, add models to `config/providerModels.js`. Only add an executor for non-OpenAI-compatible upstreams.
 
 ### Persistence — IMPORTANT (ARCHITECTURE.md is stale here)
-State is **no longer `db.json`**. It's a SQLite layer under `src/lib/db/` with an adapter fallback chain (`driver.js`): `bun:sqlite` → `better-sqlite3` (optional native dep) → `node:sqlite` (Node ≥22.5) → `sql.js` (pure-JS fallback, always works). `better-sqlite3` is deliberately in `optionalDependencies` so install never fails without build tools.
-- `src/lib/localDb.js` is a **backward-compat shim** re-exporting `src/lib/db/index.js`. New code should import from `@/lib/db/index.js`; per-entity logic lives in `src/lib/db/repos/*`. Schema/migrations in `src/lib/db/migrations/`.
-- DB file location resolves via `src/lib/db/paths.js` (`DATA_DIR`, else `~/.9router/`).
-- Usage/logs (`src/lib/usageDb.js`, `usage.json` + `log.txt`) still live under `~/.9router` and do **not** follow `DATA_DIR`.
+State is stored via **Prisma 6** against **PostgreSQL or MongoDB** (chosen by `DATABASE_PROVIDER` + `DATABASE_URL`). Dual schemas live under `prisma/postgres/` and `prisma/mongodb/`; runtime picks one client in `src/lib/db/client.js`. Per-entity logic remains in `src/lib/db/repos/*`. `src/lib/localDb.js` is a backward-compat shim re-exporting `src/lib/db/index.js`.
+- After schema changes: `npm run prisma:generate`, then `npm run prisma:migrate:postgres` or `npm run prisma:push:mongodb`.
+- `DATA_DIR` still holds non-DB runtime files; the old SQLite `data.sqlite` path is only for optional one-shot JSON migration scripts.
 
 ### RTK token saver (`open-sse/rtk/`)
 Pre-translate hooks that compress `tool_result` content in-place to cut tokens. **Fail-open**: any error returns null and leaves the body untouched — never throw out of them. Skips `is_error`/`status:"error"` results to preserve traces.

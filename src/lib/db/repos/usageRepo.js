@@ -1,7 +1,6 @@
 import { EventEmitter } from "events";
-import { getAdapter } from "../driver.js";
-import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
-import { getMeta, setMeta } from "../helpers/metaStore.js";
+import { getPrisma } from "../client.js";
+import { asJson, asObject, toDate, toIso } from "../helpers/dates.js";
 
 function maskApiKey(key) {
   if (!key || typeof key !== "string") return null;
@@ -14,7 +13,6 @@ const RING_CAP = 50;
 const CONN_CACHE_TTL_MS = 30 * 1000;
 const PERIOD_MS = { "24h": 86400000, "7d": 604800000, "30d": 2592000000, "60d": 5184000000 };
 
-// In-memory state shared across Next.js modules
 if (!global._pendingRequests) global._pendingRequests = { byModel: {}, byAccount: {} };
 if (!global._lastErrorProvider) global._lastErrorProvider = { provider: "", ts: 0 };
 if (!global._statsEmitter) {
@@ -104,6 +102,10 @@ function pushToRing(entry) {
   }
 }
 
+function normStr(v) {
+  return v == null ? "" : String(v);
+}
+
 async function getConnectionMapCached() {
   if (Date.now() - connCache.ts < CONN_CACHE_TTL_MS) return connCache.map;
   try {
@@ -121,12 +123,19 @@ async function ensureRingInitialized() {
   if (recentRing.initialized) return;
   recentRing.initialized = true;
   try {
-    const db = await getAdapter();
-    const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, cost, status, tokens FROM usageHistory ORDER BY id DESC LIMIT ?`, [RING_CAP]);
+    const prisma = await getPrisma();
+    const rows = await prisma.usageHistory.findMany({
+      orderBy: { timestamp: "desc" },
+      take: RING_CAP,
+      select: {
+        timestamp: true, provider: true, model: true, connectionId: true,
+        apiKey: true, endpoint: true, cost: true, status: true, tokens: true,
+      },
+    });
     recentRing.items = rows.reverse().map((r) => ({
-      timestamp: r.timestamp, provider: r.provider, model: r.model, connectionId: r.connectionId,
+      timestamp: toIso(r.timestamp), provider: r.provider, model: r.model, connectionId: r.connectionId,
       apiKey: r.apiKey, endpoint: r.endpoint, cost: r.cost, status: r.status,
-      tokens: parseJson(r.tokens, {}),
+      tokens: asObject(r.tokens),
     }));
   } catch {}
 }
@@ -137,10 +146,6 @@ async function calculateCost(provider, model, tokens) {
     const { getPricingForModel } = await import("./pricingRepo.js");
     const pricing = await getPricingForModel(provider, model);
     if (!pricing) return 0;
-
-    // Delegate the actual math to the single source of truth (avoids the two
-    // copies drifting apart — see open-sse/providers/pricing.js for the
-    // cache-inclusive prompt_tokens convention this assumes).
     const { calculateCostFromTokens } = await import("open-sse/providers/pricing.js");
     return calculateCostFromTokens(tokens, pricing);
   } catch (e) {
@@ -189,7 +194,6 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
     lastErrorProvider.ts = Date.now();
   }
 
-  // [PENDING] console line removed; lifecycle is visible via "▶" and "📊 done" lines
   scheduleStatsEvent("pending");
 }
 
@@ -240,7 +244,7 @@ export async function getActiveRequests() {
 
 export async function saveRequestUsage(entry) {
   try {
-    const db = await getAdapter();
+    const prisma = await getPrisma();
 
     if (!entry.timestamp) entry.timestamp = new Date().toISOString();
     entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
@@ -249,59 +253,76 @@ export async function saveRequestUsage(entry) {
     const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
     const completionTokens = tokens.completion_tokens || tokens.output_tokens || 0;
 
-    let inserted = false;
+    const inserted = await prisma.$transaction(async (tx) => {
+      const candidates = await tx.usageHistory.findMany({
+        where: {
+          timestamp: toDate(entry.timestamp),
+          promptTokens,
+          completionTokens,
+        },
+        orderBy: { timestamp: "desc" },
+        take: 20,
+        select: {
+          id: true, endpoint: true, provider: true, model: true,
+          connectionId: true, apiKey: true,
+        },
+      });
 
-    // All 3 writes (history insert, daily upsert, lifetime counter) in ONE transaction.
-    // better-sqlite3 is sync → no JS yield mid-transaction → no race in same process.
-    db.transaction(() => {
-      const existing = db.get(
-        `SELECT id, endpoint FROM usageHistory
-         WHERE timestamp = ?
-           AND COALESCE(provider, '') = COALESCE(?, '')
-           AND COALESCE(model, '') = COALESCE(?, '')
-           AND COALESCE(connectionId, '') = COALESCE(?, '')
-           AND COALESCE(apiKey, '') = COALESCE(?, '')
-           AND promptTokens = ?
-           AND completionTokens = ?
-         ORDER BY id DESC LIMIT 1`,
-        [
-          entry.timestamp, entry.provider || null, entry.model || null,
-          entry.connectionId || null, entry.apiKey || null,
-          promptTokens, completionTokens,
-        ]
+      const existing = candidates.find((r) =>
+        normStr(r.provider) === normStr(entry.provider) &&
+        normStr(r.model) === normStr(entry.model) &&
+        normStr(r.connectionId) === normStr(entry.connectionId) &&
+        normStr(r.apiKey) === normStr(entry.apiKey),
       );
 
       if (existing) {
         if (!existing.endpoint && entry.endpoint) {
-          db.run(`UPDATE usageHistory SET endpoint = ? WHERE id = ?`, [entry.endpoint, existing.id]);
+          await tx.usageHistory.update({
+            where: { id: existing.id },
+            data: { endpoint: entry.endpoint },
+          });
         }
-        return;
+        return false;
       }
 
-      db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          entry.timestamp, entry.provider || null, entry.model || null,
-          entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
-          promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({}),
-        ]
-      );
+      await tx.usageHistory.create({
+        data: {
+          timestamp: toDate(entry.timestamp),
+          provider: entry.provider || null,
+          model: entry.model || null,
+          connectionId: entry.connectionId || null,
+          apiKey: entry.apiKey || null,
+          endpoint: entry.endpoint || null,
+          promptTokens,
+          completionTokens,
+          cost: entry.cost || 0,
+          status: entry.status || "ok",
+          tokens,
+          meta: {},
+        },
+      });
 
       const dateKey = getLocalDateKey(entry.timestamp);
-      const row = db.get(`SELECT data FROM usageDaily WHERE dateKey = ?`, [dateKey]);
-      const day = row ? parseJson(row.data, {}) : {
+      const dayRow = await tx.usageDaily.findUnique({ where: { dateKey } });
+      const day = dayRow ? asObject(dayRow.data) : {
         requests: 0, promptTokens: 0, completionTokens: 0, cost: 0,
         byProvider: {}, byModel: {}, byAccount: {}, byApiKey: {}, byEndpoint: {},
       };
       aggregateEntryToDay(day, entry);
-      db.run(`INSERT INTO usageDaily(dateKey, data) VALUES(?, ?) ON CONFLICT(dateKey) DO UPDATE SET data = excluded.data`, [dateKey, stringifyJson(day)]);
+      await tx.usageDaily.upsert({
+        where: { dateKey },
+        create: { dateKey, data: day },
+        update: { data: day },
+      });
 
-      // Atomic counter increment in same transaction
-      const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
+      const cur = await tx.meta.findUnique({ where: { key: "totalRequestsLifetime" } });
       const next = (cur ? parseInt(cur.value, 10) : 0) + 1;
-      db.run(`INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [String(next)]);
-      inserted = true;
+      await tx.meta.upsert({
+        where: { key: "totalRequestsLifetime" },
+        create: { key: "totalRequestsLifetime", value: String(next) },
+        update: { value: String(next) },
+      });
+      return true;
     });
 
     if (inserted) {
@@ -314,37 +335,44 @@ export async function saveRequestUsage(entry) {
 }
 
 export async function getUsageHistory(filter = {}) {
-  const db = await getAdapter();
-  const conds = [];
-  const params = [];
+  const prisma = await getPrisma();
+  const where = {};
+  if (filter.provider) where.provider = filter.provider;
+  if (filter.model) where.model = filter.model;
+  if (filter.startDate || filter.endDate) {
+    where.timestamp = {};
+    if (filter.startDate) where.timestamp.gte = toDate(filter.startDate);
+    if (filter.endDate) where.timestamp.lte = toDate(filter.endDate);
+  }
 
-  if (filter.provider) { conds.push("provider = ?"); params.push(filter.provider); }
-  if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
-  if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
-  if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
-
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, cost, status, tokens FROM usageHistory ${where} ORDER BY id ASC`, params);
+  const rows = await prisma.usageHistory.findMany({
+    where,
+    orderBy: { timestamp: "asc" },
+    select: {
+      timestamp: true, provider: true, model: true, connectionId: true,
+      apiKey: true, endpoint: true, cost: true, status: true, tokens: true,
+    },
+  });
 
   return rows.map((r) => ({
-    timestamp: r.timestamp, provider: r.provider, model: r.model,
+    timestamp: toIso(r.timestamp), provider: r.provider, model: r.model,
     connectionId: r.connectionId, apiKeyMasked: maskApiKey(r.apiKey), endpoint: r.endpoint,
-    cost: r.cost, status: r.status, tokens: parseJson(r.tokens, {}),
+    cost: r.cost, status: r.status, tokens: asObject(r.tokens),
   }));
 }
 
-function loadDaysInRange(adapter, maxDays) {
+async function loadDaysInRange(prisma, maxDays) {
   if (maxDays == null) {
-    return adapter.all(`SELECT dateKey, data FROM usageDaily`);
+    return prisma.usageDaily.findMany();
   }
   const today = new Date();
   const cutoff = new Date(today.getFullYear(), today.getMonth(), today.getDate() - maxDays + 1);
   const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
-  return adapter.all(`SELECT dateKey, data FROM usageDaily WHERE dateKey >= ?`, [cutoffKey]);
+  return prisma.usageDaily.findMany({ where: { dateKey: { gte: cutoffKey } } });
 }
 
 export async function getUsageStats(period = "all") {
-  const db = await getAdapter();
+  const prisma = await getPrisma();
 
   const [{ getProviderConnections }, { getApiKeys }, { getProviderNodes }] = await Promise.all([
     import("./connectionsRepo.js"),
@@ -368,14 +396,17 @@ export async function getUsageStats(period = "all") {
   const apiKeyMap = {};
   for (const k of allApiKeys) apiKeyMap[k.key] = { name: k.name, id: k.id, createdAt: k.createdAt };
 
-  // recentRequests from live history (last 100 entries enough for 20 deduped)
-  const recentRows = db.all(`SELECT timestamp, provider, model, tokens, status FROM usageHistory ORDER BY id DESC LIMIT 100`);
+  const recentRows = await prisma.usageHistory.findMany({
+    orderBy: { timestamp: "desc" },
+    take: 100,
+    select: { timestamp: true, provider: true, model: true, tokens: true, status: true },
+  });
   const seen = new Set();
   const recentRequests = recentRows
     .map((r) => {
-      const t = parseJson(r.tokens, {}) || {};
+      const t = asObject(r.tokens) || {};
       return {
-        timestamp: r.timestamp, model: r.model, provider: r.provider || "",
+        timestamp: toIso(r.timestamp), model: r.model, provider: r.provider || "",
         promptTokens: t.prompt_tokens || t.input_tokens || 0,
         completionTokens: t.completion_tokens || t.output_tokens || 0,
         cachedTokens: t.cached_tokens || t.cache_read_input_tokens || 0,
@@ -403,7 +434,6 @@ export async function getUsageStats(period = "all") {
     errorProvider: (Date.now() - lastErrorProvider.ts < 10000) ? lastErrorProvider.provider : "",
   };
 
-  // Active requests
   for (const [connectionId, models] of Object.entries(pendingRequests.byAccount)) {
     for (const [modelKey, count] of Object.entries(models)) {
       if (count > 0) {
@@ -418,7 +448,6 @@ export async function getUsageStats(period = "all") {
     }
   }
 
-  // last10Minutes — query 10min window
   const now = new Date();
   const currentMinuteStart = new Date(Math.floor(now.getTime() / 60000) * 60000);
   const tenMinutesAgo = new Date(currentMinuteStart.getTime() - 9 * 60 * 1000);
@@ -428,10 +457,12 @@ export async function getUsageStats(period = "all") {
     bucketMap[ts] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
     stats.last10Minutes.push(bucketMap[ts]);
   }
-  const recent10 = db.all(
-    `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ? AND timestamp <= ?`,
-    [tenMinutesAgo.toISOString(), now.toISOString()]
-  );
+  const recent10 = await prisma.usageHistory.findMany({
+    where: {
+      timestamp: { gte: tenMinutesAgo, lte: now },
+    },
+    select: { timestamp: true, promptTokens: true, completionTokens: true, cost: true },
+  });
   for (const r of recent10) {
     const tt = new Date(r.timestamp).getTime();
     const minuteStart = Math.floor(tt / 60000) * 60000;
@@ -448,11 +479,11 @@ export async function getUsageStats(period = "all") {
   if (useDailySummary) {
     const periodDays = { "7d": 7, "30d": 30, "60d": 60 };
     const maxDays = periodDays[period] || null;
-    const dayRows = loadDaysInRange(db, maxDays);
+    const dayRows = await loadDaysInRange(prisma, maxDays);
 
     for (const dr of dayRows) {
       const dateKey = dr.dateKey;
-      const day = parseJson(dr.data, {});
+      const day = asObject(dr.data);
       stats.totalPromptTokens += day.promptTokens || 0;
       stats.totalCompletionTokens += day.completionTokens || 0;
       stats.totalCachedTokens += day.cachedTokens || 0;
@@ -537,14 +568,15 @@ export async function getUsageStats(period = "all") {
       }
     }
 
-    // Overlay precise lastUsed timestamps from history
     const overlayCutoff = maxDays ? Date.now() - maxDays * 86400000 : 0;
-    const histRows = db.all(
-      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint FROM usageHistory WHERE timestamp >= ?`,
-      [new Date(overlayCutoff).toISOString()]
-    );
+    const histRows = await prisma.usageHistory.findMany({
+      where: { timestamp: { gte: new Date(overlayCutoff) } },
+      select: {
+        timestamp: true, provider: true, model: true, connectionId: true, apiKey: true, endpoint: true,
+      },
+    });
     for (const e of histRows) {
-      const ts = e.timestamp;
+      const ts = toIso(e.timestamp);
       const modelKey = e.provider ? `${e.model} (${e.provider})` : e.model;
       if (stats.byModel[modelKey] && new Date(ts) > new Date(stats.byModel[modelKey].lastUsed)) stats.byModel[modelKey].lastUsed = ts;
 
@@ -564,27 +596,30 @@ export async function getUsageStats(period = "all") {
       if (stats.byEndpoint[endpointKey] && new Date(ts) > new Date(stats.byEndpoint[endpointKey].lastUsed)) stats.byEndpoint[endpointKey].lastUsed = ts;
     }
   } else {
-    // 24h / today: live history
     let cutoff;
     if (period === "today") {
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
-      cutoff = startOfDay.toISOString();
+      cutoff = startOfDay;
     } else {
-      cutoff = new Date(Date.now() - PERIOD_MS["24h"]).toISOString();
+      cutoff = new Date(Date.now() - PERIOD_MS["24h"]);
     }
-    const filtered = db.all(
-      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE timestamp >= ?`,
-      [cutoff]
-    );
+    const filtered = await prisma.usageHistory.findMany({
+      where: { timestamp: { gte: cutoff } },
+      select: {
+        timestamp: true, provider: true, model: true, connectionId: true, apiKey: true,
+        endpoint: true, promptTokens: true, completionTokens: true, cost: true, tokens: true,
+      },
+    });
 
     for (const r of filtered) {
-      const tokens = parseJson(r.tokens, {}) || {};
+      const tokens = asObject(r.tokens) || {};
       const promptTokens = tokens.prompt_tokens || 0;
       const completionTokens = tokens.completion_tokens || 0;
       const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
       const entryCost = r.cost || 0;
       const providerDisplayName = providerNodeNameMap[r.provider] || r.provider;
+      const ts = toIso(r.timestamp);
 
       stats.totalPromptTokens += promptTokens;
       stats.totalCompletionTokens += completionTokens;
@@ -600,27 +635,27 @@ export async function getUsageStats(period = "all") {
 
       const modelKey = r.provider ? `${r.model} (${r.provider})` : r.model;
       if (!stats.byModel[modelKey]) {
-        stats.byModel[modelKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, lastUsed: r.timestamp };
+        stats.byModel[modelKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, lastUsed: ts };
       }
       stats.byModel[modelKey].requests++;
       stats.byModel[modelKey].promptTokens += promptTokens;
       stats.byModel[modelKey].completionTokens += completionTokens;
       stats.byModel[modelKey].cachedTokens += cachedTokens;
       stats.byModel[modelKey].cost += entryCost;
-      if (new Date(r.timestamp) > new Date(stats.byModel[modelKey].lastUsed)) stats.byModel[modelKey].lastUsed = r.timestamp;
+      if (new Date(ts) > new Date(stats.byModel[modelKey].lastUsed)) stats.byModel[modelKey].lastUsed = ts;
 
       if (r.connectionId) {
         const accountName = connectionMap[r.connectionId] || `Account ${r.connectionId.slice(0, 8)}...`;
         const accountKey = `${r.model} (${r.provider} - ${accountName})`;
         if (!stats.byAccount[accountKey]) {
-          stats.byAccount[accountKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, connectionId: r.connectionId, accountName, lastUsed: r.timestamp };
+          stats.byAccount[accountKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, connectionId: r.connectionId, accountName, lastUsed: ts };
         }
         stats.byAccount[accountKey].requests++;
         stats.byAccount[accountKey].promptTokens += promptTokens;
         stats.byAccount[accountKey].completionTokens += completionTokens;
         stats.byAccount[accountKey].cachedTokens += cachedTokens;
         stats.byAccount[accountKey].cost += entryCost;
-        if (new Date(r.timestamp) > new Date(stats.byAccount[accountKey].lastUsed)) stats.byAccount[accountKey].lastUsed = r.timestamp;
+        if (new Date(ts) > new Date(stats.byAccount[accountKey].lastUsed)) stats.byAccount[accountKey].lastUsed = ts;
       }
 
       if (r.apiKey && typeof r.apiKey === "string") {
@@ -629,28 +664,28 @@ export async function getUsageStats(period = "all") {
         const apiKeyMasked = maskApiKey(r.apiKey);
         const akKey = `${apiKeyMasked}|${r.model}|${r.provider || "unknown"}`;
         if (!stats.byApiKey[akKey]) {
-          stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked, keyName, apiKeyKey: apiKeyMasked, lastUsed: r.timestamp };
+          stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked, keyName, apiKeyKey: apiKeyMasked, lastUsed: ts };
         }
         const ake = stats.byApiKey[akKey];
         ake.requests++; ake.promptTokens += promptTokens; ake.completionTokens += completionTokens; ake.cachedTokens += cachedTokens; ake.cost += entryCost;
-        if (new Date(r.timestamp) > new Date(ake.lastUsed)) ake.lastUsed = r.timestamp;
+        if (new Date(ts) > new Date(ake.lastUsed)) ake.lastUsed = ts;
       } else {
         if (!stats.byApiKey["local-no-key"]) {
-          stats.byApiKey["local-no-key"] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked: null, keyName: "Local (No API Key)", apiKeyKey: "local-no-key", lastUsed: r.timestamp };
+          stats.byApiKey["local-no-key"] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked: null, keyName: "Local (No API Key)", apiKeyKey: "local-no-key", lastUsed: ts };
         }
         const ake = stats.byApiKey["local-no-key"];
         ake.requests++; ake.promptTokens += promptTokens; ake.completionTokens += completionTokens; ake.cachedTokens += cachedTokens; ake.cost += entryCost;
-        if (new Date(r.timestamp) > new Date(ake.lastUsed)) ake.lastUsed = r.timestamp;
+        if (new Date(ts) > new Date(ake.lastUsed)) ake.lastUsed = ts;
       }
 
       const endpoint = r.endpoint || "Unknown";
       const epKey = `${endpoint}|${r.model}|${r.provider || "unknown"}`;
       if (!stats.byEndpoint[epKey]) {
-        stats.byEndpoint[epKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, endpoint, rawModel: r.model, provider: providerDisplayName, lastUsed: r.timestamp };
+        stats.byEndpoint[epKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, endpoint, rawModel: r.model, provider: providerDisplayName, lastUsed: ts };
       }
       const epe = stats.byEndpoint[epKey];
       epe.requests++; epe.promptTokens += promptTokens; epe.completionTokens += completionTokens; epe.cachedTokens += cachedTokens; epe.cost += entryCost;
-      if (new Date(r.timestamp) > new Date(epe.lastUsed)) epe.lastUsed = r.timestamp;
+      if (new Date(ts) > new Date(epe.lastUsed)) epe.lastUsed = ts;
     }
   }
 
@@ -659,7 +694,7 @@ export async function getUsageStats(period = "all") {
 }
 
 export async function getChartData(period = "7d") {
-  const db = await getAdapter();
+  const prisma = await getPrisma();
   const now = Date.now();
 
   if (period === "today") {
@@ -672,10 +707,10 @@ export async function getChartData(period = "7d") {
     const labelFn = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
     const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), tokens: 0, cost: 0 }));
 
-    const rows = db.all(
-      `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?`,
-      [new Date(startTime).toISOString()]
-    );
+    const rows = await prisma.usageHistory.findMany({
+      where: { timestamp: { gte: new Date(startTime) } },
+      select: { timestamp: true, promptTokens: true, completionTokens: true, cost: true },
+    });
     for (const r of rows) {
       const t = new Date(r.timestamp).getTime();
       if (t < startTime || t >= endTime) continue;
@@ -695,10 +730,10 @@ export async function getChartData(period = "7d") {
     const startTime = now - bucketCount * bucketMs;
     const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), tokens: 0, cost: 0 }));
 
-    const rows = db.all(
-      `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?`,
-      [new Date(startTime).toISOString()]
-    );
+    const rows = await prisma.usageHistory.findMany({
+      where: { timestamp: { gte: new Date(startTime) } },
+      select: { timestamp: true, promptTokens: true, completionTokens: true, cost: true },
+    });
     for (const r of rows) {
       const t = new Date(r.timestamp).getTime();
       if (t < startTime || t > now) continue;
@@ -713,10 +748,9 @@ export async function getChartData(period = "7d") {
   const today = new Date();
   const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-  // Build map of dateKey → day data
-  const dayRows = loadDaysInRange(db, bucketCount);
+  const dayRows = await loadDaysInRange(prisma, bucketCount);
   const dayMap = {};
-  for (const r of dayRows) dayMap[r.dateKey] = parseJson(r.data, {});
+  for (const r of dayRows) dayMap[r.dateKey] = asObject(r.data);
 
   return Array.from({ length: bucketCount }, (_, i) => {
     const d = new Date(today);
@@ -736,16 +770,19 @@ function formatLogDate(date = new Date()) {
   return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-// No-op: request log is now derived from usageHistory table on read.
 export async function appendRequestLog() {}
 
 export async function getRecentLogs(limit = 200) {
   try {
-    const db = await getAdapter();
-    const rows = db.all(
-      `SELECT timestamp, provider, model, connectionId, promptTokens, completionTokens, status, tokens FROM usageHistory ORDER BY id DESC LIMIT ?`,
-      [limit],
-    );
+    const prisma = await getPrisma();
+    const rows = await prisma.usageHistory.findMany({
+      orderBy: { timestamp: "desc" },
+      take: limit,
+      select: {
+        timestamp: true, provider: true, model: true, connectionId: true,
+        promptTokens: true, completionTokens: true, status: true, tokens: true,
+      },
+    });
     if (!rows.length) return [];
 
     const connMap = {};
@@ -760,7 +797,7 @@ export async function getRecentLogs(limit = 200) {
       const p = r.provider?.toUpperCase() || "-";
       const m = r.model || "-";
       const account = connMap[r.connectionId] || (r.connectionId ? r.connectionId.slice(0, 8) : "-");
-      const tk = r.tokens ? parseJson(r.tokens, {}) : {};
+      const tk = r.tokens ? asObject(r.tokens) : {};
       const sent = r.promptTokens ?? tk.prompt_tokens ?? "-";
       const received = r.completionTokens ?? tk.completion_tokens ?? "-";
       return `${ts} | ${m} | ${p} | ${account} | ${sent} | ${received} | ${r.status || "-"}`;
