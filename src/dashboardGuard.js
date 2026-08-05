@@ -210,8 +210,8 @@ export async function proxy(request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Protect all dashboard routes
-  if (pathname.startsWith("/dashboard")) {
+  // Protect dashboard and chat UI routes
+  if (pathname.startsWith("/dashboard") || pathname.startsWith("/chat")) {
     let requireLogin = true;
     let tunnelDashboardAccess = true;
 

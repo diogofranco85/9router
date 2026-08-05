@@ -39,6 +39,13 @@ export {
   createCombo, updateCombo, deleteCombo,
 } from "./repos/combosRepo.js";
 
+// Chat sessions
+export {
+  getChatSessions, getChatSessionById,
+  createChatSession, updateChatSession, upsertChatSession,
+  deleteChatSession, importChatSessions,
+} from "./repos/chatRepo.js";
+
 // Aliases (model + custom + mitm)
 export {
   getModelAliases, setModelAlias, deleteModelAlias,
@@ -118,6 +125,7 @@ export async function exportDb() {
     pools,
     apiKeys,
     combos,
+    chatSessions,
     aliases,
     customs,
     mitm,
@@ -128,6 +136,7 @@ export async function exportDb() {
     prisma.proxyPool.findMany(),
     prisma.apiKey.findMany(),
     prisma.combo.findMany(),
+    prisma.chatSession.findMany({ orderBy: { updatedAt: "desc" } }),
     prisma.kv.findMany({ where: { scope: "modelAliases" } }),
     prisma.kv.findMany({ where: { scope: "customModels" } }),
     prisma.kv.findMany({ where: { scope: "mitmAlias" } }),
@@ -180,6 +189,16 @@ export async function exportDb() {
       createdAt: toIso(r.createdAt),
       updatedAt: toIso(r.updatedAt),
     })),
+    chatSessions: chatSessions.map((r) => ({
+      id: r.id,
+      title: r.title || "New chat",
+      mode: r.mode || null,
+      requestModel: r.requestModel || "",
+      modelLabel: r.modelLabel || "",
+      messages: asJson(r.messages, []),
+      createdAt: toIso(r.createdAt),
+      updatedAt: toIso(r.updatedAt),
+    })),
     modelAliases: {},
     customModels: [],
     mitmAlias: {},
@@ -207,6 +226,7 @@ export async function importDb(payload) {
     await tx.proxyPool.deleteMany();
     await tx.apiKey.deleteMany();
     await tx.combo.deleteMany();
+    await tx.chatSession.deleteMany();
     await tx.kv.deleteMany({
       where: { scope: { in: ["modelAliases", "customModels", "mitmAlias", "pricing"] } },
     });
@@ -249,6 +269,20 @@ export async function importDb(payload) {
           models: c.models || [],
           createdAt: toDate(c.createdAt || new Date().toISOString()),
           updatedAt: toDate(c.updatedAt || new Date().toISOString()),
+        },
+      });
+    }
+    for (const s of payload.chatSessions || []) {
+      await tx.chatSession.create({
+        data: {
+          id: s.id,
+          title: s.title || "New chat",
+          mode: s.mode || null,
+          requestModel: s.requestModel || null,
+          modelLabel: s.modelLabel || null,
+          messages: Array.isArray(s.messages) ? s.messages : [],
+          createdAt: toDate(s.createdAt || new Date().toISOString()),
+          updatedAt: toDate(s.updatedAt || new Date().toISOString()),
         },
       });
     }
