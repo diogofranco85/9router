@@ -91,6 +91,13 @@ async function initPrisma() {
 
 /** @returns {Promise<import('./generated/postgres').PrismaClient>} */
 export async function getPrisma() {
+  // After prisma generate + HMR, a cached client may lack newly added models (e.g. user).
+  if (state.client && typeof state.client.user?.findMany !== "function") {
+    const stale = state.client;
+    state.client = null;
+    state.initPromise = null;
+    stale.$disconnect().catch(() => {});
+  }
   if (state.client) return state.client;
   if (!state.initPromise) {
     state.initPromise = initPrisma().catch((err) => {

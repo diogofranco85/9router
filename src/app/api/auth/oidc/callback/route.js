@@ -74,9 +74,11 @@ export async function GET(request) {
     clearOidcCookies(cookieStore);
     await setDashboardAuthCookie(cookieStore, request, {
       oidc: true,
+      isLegacyAdmin: true,
       oidcSub: payload.sub || null,
       oidcEmail: pickOidcEmail(payload) || null,
       oidcName: pickOidcDisplayName(payload),
+      permissions: { dashboard: true, chat: true, api: true },
     });
 
     return NextResponse.redirect(new URL("/dashboard", getPublicOrigin(request)));

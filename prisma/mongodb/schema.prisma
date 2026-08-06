@@ -65,14 +65,32 @@ model ProxyPool {
   @@map("proxyPools")
 }
 
+model User {
+  id                 String   @id @map("_id")
+  email              String   @unique
+  name               String?
+  passwordHash       String
+  mustChangePassword Boolean  @default(true)
+  isBlocked          Boolean  @default(false)
+  permDashboard      Boolean  @default(true)
+  permChat           Boolean  @default(true)
+  permApi            Boolean  @default(true)
+  createdAt          DateTime
+  updatedAt          DateTime
+
+  @@map("users")
+}
+
 model ApiKey {
   id        String   @id @map("_id")
   key       String   @unique
   name      String?
   machineId String?
+  userId    String?
   isActive  Boolean  @default(true)
   createdAt DateTime
 
+  @@index([userId])
   @@map("apiKeys")
 }
 

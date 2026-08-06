@@ -28,9 +28,17 @@ export {
   createProxyPool, updateProxyPool, deleteProxyPool,
 } from "./repos/proxyPoolsRepo.js";
 
+// Users (access control)
+export {
+  countUsers, countDashboardUsers, getUsers, getUserById, getUserByEmail,
+  createUser, updateUser, setUserPassword, resetUserPassword, deleteUser,
+  generateRandomPassword, hashPassword, verifyUserPassword,
+} from "./repos/usersRepo.js";
+
 // API keys
 export {
-  getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  getApiKeys, getApiKeysByUserId, getApiKeyById, getApiKeyByKey,
+  createApiKey, updateApiKey, deleteApiKey, validateApiKey,
 } from "./repos/apiKeysRepo.js";
 
 // Combos
@@ -124,6 +132,7 @@ export async function exportDb() {
     nodes,
     pools,
     apiKeys,
+    users,
     combos,
     chatSessions,
     aliases,
@@ -135,6 +144,7 @@ export async function exportDb() {
     prisma.providerNode.findMany(),
     prisma.proxyPool.findMany(),
     prisma.apiKey.findMany(),
+    prisma.user.findMany(),
     prisma.combo.findMany(),
     prisma.chatSession.findMany({ orderBy: { updatedAt: "desc" } }),
     prisma.kv.findMany({ where: { scope: "modelAliases" } }),
@@ -178,8 +188,22 @@ export async function exportDb() {
       key: r.key,
       name: r.name,
       machineId: r.machineId,
+      userId: r.userId || null,
       isActive: r.isActive === true,
       createdAt: toIso(r.createdAt),
+    })),
+    users: users.map((r) => ({
+      id: r.id,
+      email: r.email,
+      name: r.name || null,
+      passwordHash: r.passwordHash,
+      mustChangePassword: r.mustChangePassword === true,
+      isBlocked: r.isBlocked === true,
+      permDashboard: r.permDashboard !== false,
+      permChat: r.permChat !== false,
+      permApi: r.permApi !== false,
+      createdAt: toIso(r.createdAt),
+      updatedAt: toIso(r.updatedAt),
     })),
     combos: combos.map((r) => ({
       id: r.id,
@@ -225,6 +249,7 @@ export async function importDb(payload) {
     await tx.providerNode.deleteMany();
     await tx.proxyPool.deleteMany();
     await tx.apiKey.deleteMany();
+    await tx.user.deleteMany();
     await tx.combo.deleteMany();
     await tx.chatSession.deleteMany();
     await tx.kv.deleteMany({
@@ -255,8 +280,26 @@ export async function importDb(payload) {
           key: k.key,
           name: k.name || null,
           machineId: k.machineId || null,
+          userId: k.userId || null,
           isActive: k.isActive !== false,
           createdAt: toDate(k.createdAt || new Date().toISOString()),
+        },
+      });
+    }
+    for (const u of payload.users || []) {
+      await tx.user.create({
+        data: {
+          id: u.id,
+          email: u.email,
+          name: u.name || null,
+          passwordHash: u.passwordHash,
+          mustChangePassword: u.mustChangePassword !== false,
+          isBlocked: u.isBlocked === true,
+          permDashboard: u.permDashboard !== false,
+          permChat: u.permChat !== false,
+          permApi: u.permApi !== false,
+          createdAt: toDate(u.createdAt || new Date().toISOString()),
+          updatedAt: toDate(u.updatedAt || new Date().toISOString()),
         },
       });
     }

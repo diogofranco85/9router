@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { getSettings, validateApiKey } from "@/lib/localDb";
+import { getSettings, validateApiKey, getUserById } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+import { getDashboardAuthSession, verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+import { permissionsFromUser, fullPermissions } from "@/lib/auth/accessControl";
 
 const CLI_TOKEN_HEADER = "x-9r-cli-token";
 const CLI_TOKEN_SALT = "9r-cli-auth";
@@ -18,7 +19,6 @@ async function hasValidCliToken(request) {
   return token === await getCliToken();
 }
 
-// Public API paths — no auth required (LLM API has its own key auth inside handler).
 const PUBLIC_API_PATHS = [
   "/api/health",
   "/api/init",
@@ -31,10 +31,8 @@ const PUBLIC_API_PATHS = [
   "/api/settings/require-login",
 ];
 
-// Public top-level prefixes (LLM API endpoints with their own API key auth).
 const PUBLIC_PREFIXES = ["/v1", "/v1beta", "/api/v1", "/api/v1beta", "/codex"];
 
-// Always require JWT token regardless of requireLogin setting
 const ALWAYS_PROTECTED = [
   "/api/shutdown",
   "/api/settings/database",
@@ -44,28 +42,6 @@ const ALWAYS_PROTECTED = [
   "/api/oauth/kiro/auto-import",
 ];
 
-// Require auth, but allow through if requireLogin is disabled
-const PROTECTED_API_PATHS = [
-  "/api/settings",
-  "/api/keys",
-  "/api/providers",
-  "/api/provider-nodes",
-  "/api/proxy-pools",
-  "/api/combos",
-  "/api/models",
-  "/api/usage",
-  "/api/oauth",
-  "/api/cloud",
-  "/api/media-providers",
-  "/api/pricing",
-  "/api/tags",
-  "/api/cli-tools",
-  "/api/mcp",
-  "/api/translator",
-  "/api/tunnel",
-];
-
-// Routes that spawn child processes or read host secrets — restrict to localhost.
 const LOCAL_ONLY_PATHS = [
   "/api/cli-tools/cowork-settings",
   "/api/cli-tools/antigravity-mitm",
@@ -86,6 +62,13 @@ const LOCAL_ONLY_PATHS = [
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
+const CHANGE_PASSWORD_PATHS = [
+  "/account/change-password",
+  "/api/auth/change-password",
+  "/api/auth/logout",
+  "/api/auth/status",
+];
+
 function isLoopbackHostname(h) {
   if (!h) return false;
   const name = h.split(":")[0].replace(/^\[|\]$/g, "").toLowerCase();
@@ -93,15 +76,11 @@ function isLoopbackHostname(h) {
 }
 
 export function isLocalRequest(request) {
-  // Stamped by custom-server.js when forwarding headers exist: request came through
-  // a reverse proxy, so the loopback socket is the proxy hop, not the end-user.
   if (request.headers.get("x-9r-via-proxy")) return false;
-  // Trusted peer IP from TCP socket (custom-server.js); unspoofable. Primary anchor for "local".
   const realIp = request.headers.get("x-9r-real-ip");
   if (realIp) {
     if (!isLoopbackHostname(realIp)) return false;
   } else if (!isLoopbackHostname(request.headers.get("host"))) {
-    // Fallback for bare server.js (dev) without custom-server: legacy Host-based check.
     return false;
   }
   const origin = request.headers.get("origin");
@@ -141,9 +120,34 @@ async function canAccessPublicLlmApi(request) {
 
 async function canAccessLocalOnlyRoute(request) {
   if (await hasValidCliToken(request)) return true;
-  // Browser on host: loopback Host + Origin (blocks tunnel/CSRF) + auth (JWT or requireLogin=false)
   if (isLocalRequest(request) && await isAuthenticated(request)) return true;
   return false;
+}
+
+async function resolveSession(request) {
+  const token = request.cookies.get("auth_token")?.value;
+  const payload = await getDashboardAuthSession(token);
+  if (!payload?.authenticated) return null;
+
+  if (payload.userId) {
+    const user = await getUserById(payload.userId);
+    if (!user || user.isBlocked) return null;
+    return {
+      authenticated: true,
+      isLegacyAdmin: false,
+      userId: user.id,
+      mustChangePassword: user.mustChangePassword === true,
+      permissions: permissionsFromUser(user),
+    };
+  }
+
+  return {
+    authenticated: true,
+    isLegacyAdmin: true,
+    userId: null,
+    mustChangePassword: false,
+    permissions: fullPermissions(),
+  };
 }
 
 async function hasValidToken(request) {
@@ -151,7 +155,6 @@ async function hasValidToken(request) {
   return await verifyDashboardAuthToken(token);
 }
 
-// Read settings directly from DB to avoid self-fetch deadlock in proxy
 async function loadSettings() {
   try {
     return await getSettings();
@@ -172,6 +175,102 @@ function isPublicApi(pathname) {
   return PUBLIC_API_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+function sessionHasPerm(session, perm) {
+  if (!session) return false;
+  if (session.isLegacyAdmin) return true;
+  return session.permissions?.[perm] === true;
+}
+
+function isChangePasswordAllowed(pathname) {
+  return CHANGE_PASSWORD_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+function redirectLogin(request) {
+  return NextResponse.redirect(new URL("/login", request.url));
+}
+
+function redirectChangePassword(request) {
+  return NextResponse.redirect(new URL("/account/change-password", request.url));
+}
+
+function forbidApi(message = "Forbidden") {
+  return NextResponse.json({ error: message }, { status: 403 });
+}
+
+/**
+ * Enforce mustChangePassword + permission for UI and API paths.
+ * Returns NextResponse to short-circuit, or null to continue.
+ */
+async function enforceAccessPolicies(request, pathname) {
+  const session = await resolveSession(request);
+  if (!session) return null;
+
+  if (session.mustChangePassword && !isChangePasswordAllowed(pathname)) {
+    if (pathname.startsWith("/api/")) {
+      return forbidApi("Password change required");
+    }
+    return redirectChangePassword(request);
+  }
+
+  // Chat UI + chat APIs
+  if (pathname.startsWith("/chat") || pathname.startsWith("/api/chat")) {
+    if (!sessionHasPerm(session, "chat")) {
+      if (pathname.startsWith("/api/")) return forbidApi("Missing permission: chat");
+      if (sessionHasPerm(session, "dashboard")) {
+        return NextResponse.redirect(new URL("/dashboard", request.url));
+      }
+      return redirectLogin(request);
+    }
+  }
+
+  // Dashboard UI
+  if (pathname.startsWith("/dashboard")) {
+    if (!sessionHasPerm(session, "dashboard")) {
+      if (sessionHasPerm(session, "chat")) {
+        return NextResponse.redirect(new URL("/chat", request.url));
+      }
+      return redirectLogin(request);
+    }
+  }
+
+  // Account page — any authenticated user (password change / own keys)
+  if (pathname.startsWith("/account")) {
+    return null;
+  }
+
+  // Management APIs require dashboard (users, settings, providers, keys list for admin, etc.)
+  // User-scoped keys API is allowed for any authenticated user (own keys).
+  if (pathname.startsWith("/api/users")) {
+    if (!sessionHasPerm(session, "dashboard")) return forbidApi("Missing permission: dashboard");
+  }
+
+  if (
+    pathname.startsWith("/api/settings") ||
+    pathname.startsWith("/api/providers") ||
+    pathname.startsWith("/api/provider-nodes") ||
+    pathname.startsWith("/api/proxy-pools") ||
+    pathname.startsWith("/api/combos") ||
+    pathname.startsWith("/api/models") ||
+    pathname.startsWith("/api/usage") ||
+    pathname.startsWith("/api/oauth") ||
+    pathname.startsWith("/api/cloud") ||
+    pathname.startsWith("/api/media-providers") ||
+    pathname.startsWith("/api/pricing") ||
+    pathname.startsWith("/api/tags") ||
+    pathname.startsWith("/api/cli-tools") ||
+    pathname.startsWith("/api/translator") ||
+    pathname.startsWith("/api/tunnel")
+  ) {
+    // Allow authenticated users without dashboard only for nothing here —
+    // these are management. Chat-only users should not hit them.
+    if (session.userId && !sessionHasPerm(session, "dashboard")) {
+      return forbidApi("Missing permission: dashboard");
+    }
+  }
+
+  return null;
+}
+
 export const __test__ = {
   isLocalRequest,
   isPublicLlmApi,
@@ -183,14 +282,12 @@ export const __test__ = {
 export async function proxy(request) {
   const { pathname } = request.nextUrl;
 
-  // Local-only gate for spawn-capable / host-secret routes.
   if (LOCAL_ONLY_PATHS.some((p) => pathname.startsWith(p))) {
     if (!(await canAccessLocalOnlyRoute(request))) {
       return NextResponse.json({ error: "Local only: CLI token required" }, { status: 403 });
     }
   }
 
-  // Always protected - require valid JWT or local CLI token (machineId-based)
   if (ALWAYS_PROTECTED.some((p) => pathname.startsWith(p))) {
     if (await hasValidCliToken(request) || await hasValidToken(request))
       return NextResponse.next();
@@ -202,15 +299,27 @@ export async function proxy(request) {
     return NextResponse.json({ error: "API key required for remote API access" }, { status: 401 });
   }
 
-  // Deny-by-default for /api/* — public allow-list bypasses, everything else requires auth.
   if (pathname.startsWith("/api/")) {
     if (isPublicApi(pathname)) return NextResponse.next();
-    if (await hasValidCliToken(request) || await isAuthenticated(request))
+    if (await hasValidCliToken(request) || await isAuthenticated(request)) {
+      const denied = await enforceAccessPolicies(request, pathname);
+      if (denied) return denied;
       return NextResponse.next();
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Protect dashboard and chat UI routes
+  // Account routes (change password) — require auth
+  if (pathname.startsWith("/account")) {
+    const token = request.cookies.get("auth_token")?.value;
+    if (!token || !(await verifyDashboardAuthToken(token))) {
+      return redirectLogin(request);
+    }
+    const denied = await enforceAccessPolicies(request, pathname);
+    if (denied) return denied;
+    return NextResponse.next();
+  }
+
   if (pathname.startsWith("/dashboard") || pathname.startsWith("/chat")) {
     let requireLogin = true;
     let tunnelDashboardAccess = true;
@@ -221,37 +330,34 @@ export async function proxy(request) {
         requireLogin = settings.requireLogin !== false;
         tunnelDashboardAccess = settings.tunnelDashboardAccess === true;
 
-        // Block tunnel/tailscale access if disabled (redirect to login)
         if (!tunnelDashboardAccess) {
           const host = (request.headers.get("host") || "").split(":")[0].toLowerCase();
           const tunnelHost = settings.tunnelUrl ? new URL(settings.tunnelUrl).hostname.toLowerCase() : "";
           const tailscaleHost = settings.tailscaleUrl ? new URL(settings.tailscaleUrl).hostname.toLowerCase() : "";
           if ((tunnelHost && host === tunnelHost) || (tailscaleHost && host === tailscaleHost)) {
-            return NextResponse.redirect(new URL("/login", request.url));
+            return redirectLogin(request);
           }
         }
       }
     } catch {
-      // On error, keep defaults (require login, block tunnel)
+      // keep defaults
     }
 
-    // If login not required, allow through
     if (!requireLogin) return NextResponse.next();
 
-    // Verify JWT token
     const token = request.cookies.get("auth_token")?.value;
     if (token) {
       if (await verifyDashboardAuthToken(token)) {
+        const denied = await enforceAccessPolicies(request, pathname);
+        if (denied) return denied;
         return NextResponse.next();
-      } else {
-        return NextResponse.redirect(new URL("/login", request.url));
       }
+      return redirectLogin(request);
     }
 
-    return NextResponse.redirect(new URL("/login", request.url));
+    return redirectLogin(request);
   }
 
-  // Redirect / to /dashboard if logged in, or /dashboard if it's the root
   if (pathname === "/") {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }

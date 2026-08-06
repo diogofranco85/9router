@@ -9,15 +9,27 @@ function rowToKey(row) {
     key: row.key,
     name: row.name,
     machineId: row.machineId,
+    userId: row.userId || null,
     isActive: row.isActive === true,
     createdAt: toIso(row.createdAt),
   };
 }
 
-export async function getApiKeys() {
+export async function getApiKeys({ userId } = {}) {
   const prisma = await getPrisma();
-  const rows = await prisma.apiKey.findMany({ orderBy: { createdAt: "asc" } });
+  const where = {};
+  if (userId !== undefined) {
+    where.userId = userId;
+  }
+  const rows = await prisma.apiKey.findMany({
+    where,
+    orderBy: { createdAt: "asc" },
+  });
   return rows.map(rowToKey);
+}
+
+export async function getApiKeysByUserId(userId) {
+  return getApiKeys({ userId });
 }
 
 export async function getApiKeyById(id) {
@@ -25,7 +37,12 @@ export async function getApiKeyById(id) {
   return rowToKey(await prisma.apiKey.findUnique({ where: { id } }));
 }
 
-export async function createApiKey(name, machineId) {
+export async function getApiKeyByKey(key) {
+  const prisma = await getPrisma();
+  return rowToKey(await prisma.apiKey.findUnique({ where: { key } }));
+}
+
+export async function createApiKey(name, machineId, { userId = null } = {}) {
   if (!machineId) throw new Error("machineId is required");
   const prisma = await getPrisma();
   const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
@@ -35,6 +52,7 @@ export async function createApiKey(name, machineId) {
     name,
     key: result.key,
     machineId,
+    userId: userId || null,
     isActive: true,
     createdAt: new Date().toISOString(),
   };
@@ -44,6 +62,7 @@ export async function createApiKey(name, machineId) {
       key: apiKey.key,
       name: apiKey.name,
       machineId: apiKey.machineId,
+      userId: apiKey.userId,
       isActive: true,
       createdAt: toDate(apiKey.createdAt),
     },
@@ -63,6 +82,7 @@ export async function updateApiKey(id, data) {
         key: merged.key,
         name: merged.name,
         machineId: merged.machineId,
+        userId: merged.userId || null,
         isActive: !!merged.isActive,
       },
     });
@@ -80,9 +100,21 @@ export async function deleteApiKey(id) {
   }
 }
 
+/**
+ * Validate an API key for /v1 access.
+ * When the key belongs to a user, that user must be active and have permApi.
+ * Legacy keys (userId null) remain valid when isActive.
+ */
 export async function validateApiKey(key) {
   const prisma = await getPrisma();
   const row = await prisma.apiKey.findUnique({ where: { key } });
-  if (!row) return false;
-  return row.isActive === true;
+  if (!row || row.isActive !== true) return false;
+
+  if (!row.userId) return true;
+
+  const user = await prisma.user.findUnique({ where: { id: row.userId } });
+  if (!user) return false;
+  if (user.isBlocked === true) return false;
+  if (user.permApi === false) return false;
+  return true;
 }

@@ -25,6 +25,8 @@ const DEFAULT_SETTINGS = {
   },
   requireLogin: true,
   requireApiKey: true,
+  accessControlEnabled: false,
+  blockEnvPassword: false,
   tunnelDashboardAccess: true,
   authMode: "password",
   oidcIssuerUrl: "",

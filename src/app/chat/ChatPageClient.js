@@ -9,6 +9,7 @@ import {
   Select,
 } from "@/shared/components";
 import { cn } from "@/shared/utils/cn";
+import { APP_CONFIG } from "@/shared/constants/config";
 import MarkdownMessage from "./MarkdownMessage";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import {
@@ -825,32 +826,60 @@ export default function ChatPageClient() {
 
   return (
     <div className="flex h-full w-full bg-bg text-text-main">
-      {/* Sidebar */}
+      {/* Sidebar — same chrome as dashboard */}
       <aside
         className={cn(
-          "flex shrink-0 flex-col border-r border-border bg-surface transition-all duration-200",
-          sidebarOpen ? "w-[260px]" : "w-0 overflow-hidden border-r-0",
+          "flex shrink-0 flex-col border-r border-border-subtle bg-vibrancy backdrop-blur-xl transition-all duration-200 min-h-full",
+          sidebarOpen ? "w-72" : "w-0 overflow-hidden border-r-0",
         )}
       >
-        <div className="flex items-center gap-2 p-3">
-          <Button
-            variant="primary"
-            icon="add"
-            className="w-full justify-start"
-            onClick={createNewChat}
-          >
-            New chat
-          </Button>
+        {/* Traffic lights */}
+        <div className="flex items-center gap-2 px-6 pt-5 pb-2">
+          <div className="w-3 h-3 rounded-full bg-[#FF5F56]" />
+          <div className="w-3 h-3 rounded-full bg-[#FFBD2E]" />
+          <div className="w-3 h-3 rounded-full bg-[#27C93F]" />
         </div>
-        <div className="flex-1 overflow-y-auto px-2 pb-3">
+
+        {/* Logo */}
+        <div className="px-6 py-4 flex flex-col gap-2">
+          <Link href="/chat" className="flex items-center gap-3">
+            <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)]">
+              <span className="material-symbols-outlined text-white text-[20px]">hub</span>
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-lg font-semibold tracking-tight text-text-main">
+                {APP_CONFIG.name}
+              </h1>
+              <span className="text-xs text-text-muted">v{APP_CONFIG.version}</span>
+            </div>
+          </Link>
+        </div>
+
+        <div className="px-4 pb-2">
+          <button
+            type="button"
+            onClick={createNewChat}
+            className="flex w-full items-center gap-3 rounded-lg bg-primary/10 px-3 py-2 text-primary transition-all hover:bg-primary/15"
+          >
+            <span className="material-symbols-outlined text-[18px] fill-1">add_comment</span>
+            <span className="text-[13px] font-medium">New chat</span>
+          </button>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto custom-scrollbar px-4 py-1 space-y-0.5">
+          <p className="px-3 mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted/60">
+            Chats
+          </p>
           {sessionItems.map((session) => {
             const active = session.id === activeSessionId;
             return (
               <div
                 key={session.id}
                 className={cn(
-                  "group mb-0.5 flex items-center gap-1 rounded-[10px] px-2 py-2 text-sm transition-colors",
-                  active ? "bg-brand-500/10 text-text-main" : "text-text-muted hover:bg-surface-2 hover:text-text-main",
+                  "group flex items-center gap-1 rounded-lg px-2 py-1.5 transition-all",
+                  active
+                    ? "bg-primary/10 text-primary"
+                    : "text-text-muted hover:bg-surface-2 hover:text-text-main",
                 )}
               >
                 <button
@@ -858,10 +887,24 @@ export default function ChatPageClient() {
                   className="min-w-0 flex-1 text-left"
                   onClick={() => setActiveSessionId(session.id)}
                 >
-                  <div className="truncate font-medium">{session.title || "New chat"}</div>
-                  <div className="truncate text-xs opacity-70">
-                    {formatRelativeTime(session.updatedAt)}
-                    {session.modelLabel ? ` · ${session.modelLabel}` : ""}
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        "material-symbols-outlined shrink-0 text-[18px]",
+                        active ? "fill-1" : "group-hover:text-primary transition-colors",
+                      )}
+                    >
+                      chat_bubble
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium">
+                        {session.title || "New chat"}
+                      </span>
+                      <span className={cn("block truncate text-[11px]", active ? "text-primary/70" : "opacity-70")}>
+                        {formatRelativeTime(session.updatedAt)}
+                        {session.modelLabel ? ` · ${session.modelLabel}` : ""}
+                      </span>
+                    </span>
                   </div>
                 </button>
                 <button
@@ -875,12 +918,47 @@ export default function ChatPageClient() {
               </div>
             );
           })}
+        </nav>
+
+        <div className="mt-auto border-t border-border-subtle px-4 py-3 space-y-0.5">
+          <p className="px-3 mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted/60">
+            System
+          </p>
+          <Link
+            href="/account"
+            className="flex items-center gap-3 rounded-lg px-3 py-1 text-text-muted transition-all hover:bg-surface-2 hover:text-text-main group"
+          >
+            <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">person</span>
+            <span className="text-[13px] font-medium">Account</span>
+          </Link>
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-3 rounded-lg px-3 py-1 text-text-muted transition-all hover:bg-surface-2 hover:text-text-main group"
+          >
+            <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">dashboard</span>
+            <span className="text-[13px] font-medium">Dashboard</span>
+          </Link>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const res = await fetch("/api/auth/logout", { method: "POST" });
+                if (res.ok) window.location.assign("/login");
+              } catch {
+                window.location.assign("/login");
+              }
+            }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-1 text-left text-text-muted transition-all hover:bg-red-500/10 hover:text-red-500 group"
+          >
+            <span className="material-symbols-outlined text-[18px] group-hover:text-red-500 transition-colors">logout</span>
+            <span className="text-[13px] font-medium">Logout</span>
+          </button>
         </div>
       </aside>
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center gap-3 border-b border-border bg-surface px-3 py-2.5 sm:px-4">
+        <header className="flex shrink-0 items-center gap-3 border-b border-border-subtle bg-surface/60 backdrop-blur-xl px-3 py-2.5 sm:px-4">
           <button
             type="button"
             className="rounded-[10px] p-2 text-text-muted hover:bg-surface-2 hover:text-text-main"
@@ -936,14 +1014,6 @@ export default function ChatPageClient() {
               </div>
             )}
           </div>
-
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-1.5 rounded-[10px] px-3 py-2 text-sm text-text-muted transition hover:bg-surface-2 hover:text-text-main"
-          >
-            <span className="material-symbols-outlined text-[18px]">dashboard</span>
-            <span className="hidden sm:inline">Dashboard</span>
-          </Link>
         </header>
 
         {(loadError || (!loadingData && connections.length === 0)) && (

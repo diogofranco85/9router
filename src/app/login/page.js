@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Card, Button, Input } from "@/shared/components";
 
 export default function LoginPage() {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [resetHint, setResetHint] = useState("");
@@ -15,8 +16,9 @@ export default function LoginPage() {
   const [oidcLoginLabel, setOidcLoginLabel] = useState("Sign in with OIDC");
   const [mustChange, setMustChange] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  const [accessControlEnabled, setAccessControlEnabled] = useState(false);
+  const [envPasswordBlocked, setEnvPasswordBlocked] = useState(false);
 
-  // Countdown for rate-limit
   useEffect(() => {
     if (retryAfter <= 0) return;
     const id = setInterval(() => setRetryAfter((s) => (s > 0 ? s - 1 : 0)), 1000);
@@ -38,24 +40,42 @@ export default function LoginPage() {
         if (res.ok) {
           const data = await res.json();
           if (data.authenticated === true || data.requireLogin === false) {
-            window.location.assign("/dashboard");
+            if (data.mustChangePassword) {
+              window.location.assign("/account/change-password");
+              return;
+            }
+            const dest = data.permissions?.dashboard !== false ? "/dashboard" : "/chat";
+            window.location.assign(dest);
             return;
           }
           setHasPassword(!!data.hasPassword);
           setAuthMode(data.authMode || "password");
           setOidcConfigured(data.oidcConfigured === true);
           setOidcLoginLabel(data.oidcLoginLabel || "Sign in with OIDC");
+          setAccessControlEnabled(!!data.accessControlEnabled);
+          setEnvPasswordBlocked(!!data.envPasswordBlocked);
         } else {
-          // Safe fallback on non-OK response to avoid infinite loading state.
           setHasPassword(true);
         }
-      } catch (err) {
+      } catch {
         clearTimeout(timeoutId);
         setHasPassword(true);
       }
     }
     checkAuth();
   }, []);
+
+  const redirectAfterLogin = (data) => {
+    if (data.mustChangePassword) {
+      window.location.assign("/account/change-password");
+      return;
+    }
+    if (data.permissions?.dashboard === false && data.permissions?.chat) {
+      window.location.assign("/chat");
+      return;
+    }
+    window.location.assign("/dashboard");
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -64,33 +84,37 @@ export default function LoginPage() {
     setResetHint("");
 
     try {
+      const payload = { password };
+      if (accessControlEnabled && email.trim()) {
+        payload.email = email.trim();
+      }
+
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify(payload),
       });
 
       if (res.ok) {
         const data = await res.json();
-        if (data.mustChangePassword) {
+        if (data.mustChangePassword && data.isLegacyAdmin) {
           setMustChange(true);
           return;
         }
-        window.location.assign("/dashboard");
+        redirectAfterLogin(data);
       } else {
         const data = await res.json();
-        setError(data.error || "Invalid password");
+        setError(data.error || "Invalid credentials");
         if (data.resetHint) setResetHint(data.resetHint);
         if (data.retryAfter) setRetryAfter(Number(data.retryAfter));
       }
-    } catch (err) {
+    } catch {
       setError("An error occurred. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Force a new password before entering the dashboard (default + remote).
   const handleSetNewPassword = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -107,7 +131,7 @@ export default function LoginPage() {
         const data = await res.json();
         setError(data.error || "Failed to set password");
       }
-    } catch (err) {
+    } catch {
       setError("An error occurred. Please try again.");
     } finally {
       setLoading(false);
@@ -118,10 +142,11 @@ export default function LoginPage() {
     window.location.href = "/api/auth/oidc/start";
   };
 
-  const oidcAvailable = oidcConfigured && ["oidc", "both"].includes(authMode);
-  const passwordAvailable = authMode !== "oidc" || !oidcConfigured;
+  const oidcAvailable = oidcConfigured && ["oidc", "both"].includes(authMode) && !accessControlEnabled;
+  const passwordAvailable = authMode !== "oidc" || !oidcConfigured || accessControlEnabled;
+  const showEmailField = accessControlEnabled;
+  const sharedStillAllowed = accessControlEnabled && !envPasswordBlocked;
 
-  // Show loading state while checking password
   if (hasPassword === null) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-bg p-4">
@@ -135,15 +160,16 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-bg p-4 relative overflow-hidden">
-      {/* Faint grid background */}
       <div className="landing-grid absolute inset-0 pointer-events-none" aria-hidden="true" />
       <div className="relative z-10 w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-primary mb-2">9Router</h1>
           <p className="text-text-muted">
-            {authMode === "oidc" && oidcConfigured
-              ? "Sign in with your OIDC provider to access the dashboard"
-              : "Enter your password to access the dashboard"}
+            {showEmailField
+              ? "Sign in with your email and password"
+              : authMode === "oidc" && oidcConfigured
+                ? "Sign in with your OIDC provider to access the dashboard"
+                : "Enter your password to access the dashboard"}
           </p>
         </div>
 
@@ -181,16 +207,18 @@ export default function LoginPage() {
 
             {passwordAvailable ? (
               <form onSubmit={handleLogin} className="flex flex-col gap-4">
-                {((authMode === "oidc" && !oidcConfigured) || (authMode === "both" && !oidcConfigured)) && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 text-center">
-                    OIDC login is enabled, but the issuer/client fields are not configured yet. Password login is still available for recovery.
-                  </p>
-                )}
-
-                {authMode === "both" && oidcConfigured && (
-                  <p className="text-xs text-text-muted text-center">
-                    Password and OIDC login are both enabled.
-                  </p>
+                {showEmailField && (
+                  <div className="flex flex-col gap-2">
+                    <label className="text-sm font-medium">Email</label>
+                    <Input
+                      type="email"
+                      placeholder="user@example.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required={envPasswordBlocked}
+                      autoFocus
+                    />
+                  </div>
                 )}
 
                 <div className="flex flex-col gap-2">
@@ -201,7 +229,7 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    autoFocus={!oidcAvailable}
+                    autoFocus={!showEmailField && !oidcAvailable}
                   />
                   {error && <p className="text-xs text-red-500">{error}</p>}
                   {retryAfter > 0 && (
@@ -209,12 +237,18 @@ export default function LoginPage() {
                       Locked. Retry in <span className="font-mono">{retryAfter}s</span>.
                     </p>
                   )}
-                  {resetHint && (
+                  {resetHint && !accessControlEnabled && (
                     <p className="text-xs text-text-muted">
                       Forgot password? Open <code className="bg-sidebar px-1 rounded">9router</code> CLI on the host → <b>Settings</b> → <b>Reset Password to Default</b>.
                     </p>
                   )}
                 </div>
+
+                {sharedStillAllowed && (
+                  <p className="text-xs text-text-muted text-center">
+                    Leave email empty to use the shared admin password.
+                  </p>
+                )}
 
                 <Button
                   type="submit"
@@ -226,10 +260,12 @@ export default function LoginPage() {
                   {retryAfter > 0 ? `Wait ${retryAfter}s` : "Login"}
                 </Button>
 
-                <p className="text-xs text-center text-text-muted mt-2">
-                  Default password is <code className="bg-sidebar px-1 rounded">123456</code>
-                </p>
-                {hasPassword === false && (
+                {!accessControlEnabled && (
+                  <p className="text-xs text-center text-text-muted mt-2">
+                    Default password is <code className="bg-sidebar px-1 rounded">123456</code>
+                  </p>
+                )}
+                {hasPassword === false && !accessControlEnabled && (
                   <p className="text-xs text-center text-amber-600 dark:text-amber-400">
                     Security risk: no password set. You will be asked to set one when logging in remotely.
                   </p>
