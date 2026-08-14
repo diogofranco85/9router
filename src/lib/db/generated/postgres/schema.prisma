@@ -1,0 +1,176 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../src/lib/db/generated/postgres"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Meta {
+  key   String @id
+  value String
+
+  @@map("_meta")
+}
+
+model Settings {
+  id   Int  @id
+  data Json
+
+  @@map("settings")
+}
+
+model ProviderConnection {
+  id        String   @id
+  provider  String
+  authType  String
+  name      String?
+  email     String?
+  priority  Int?
+  isActive  Boolean  @default(true)
+  data      Json
+  createdAt DateTime
+  updatedAt DateTime
+
+  @@index([provider])
+  @@index([provider, isActive])
+  @@index([provider, priority])
+  @@map("providerConnections")
+}
+
+model ProviderNode {
+  id        String   @id
+  type      String?
+  name      String?
+  data      Json
+  createdAt DateTime
+  updatedAt DateTime
+
+  @@index([type])
+  @@map("providerNodes")
+}
+
+model ProxyPool {
+  id         String   @id
+  isActive   Boolean  @default(true)
+  testStatus String?
+  data       Json
+  createdAt  DateTime
+  updatedAt  DateTime
+
+  @@index([isActive])
+  @@index([testStatus])
+  @@map("proxyPools")
+}
+
+model User {
+  id                 String   @id
+  email              String   @unique
+  name               String?
+  passwordHash       String
+  mustChangePassword Boolean  @default(true)
+  isBlocked          Boolean  @default(false)
+  permDashboard      Boolean  @default(true)
+  permChat           Boolean  @default(true)
+  permApi            Boolean  @default(true)
+  createdAt          DateTime
+  updatedAt          DateTime
+
+  @@index([email])
+  @@map("users")
+}
+
+model ApiKey {
+  id        String   @id
+  key       String   @unique
+  name      String?
+  machineId String?
+  userId    String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime
+
+  @@index([userId])
+  @@map("apiKeys")
+}
+
+model Combo {
+  id        String   @id
+  name      String   @unique
+  kind      String?
+  models    Json
+  createdAt DateTime
+  updatedAt DateTime
+
+  @@map("combos")
+}
+
+model Kv {
+  scope String
+  key   String
+  value Json
+
+  @@id([scope, key])
+  @@index([scope])
+  @@map("kv")
+}
+
+model UsageHistory {
+  id               Int      @id @default(autoincrement())
+  timestamp        DateTime
+  provider         String?
+  model            String?
+  connectionId     String?
+  apiKey           String?
+  endpoint         String?
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  cost             Float    @default(0)
+  status           String?
+  tokens           Json?
+  meta             Json?
+
+  @@index([timestamp(sort: Desc)])
+  @@index([provider])
+  @@index([model])
+  @@index([connectionId])
+  @@map("usageHistory")
+}
+
+model UsageDaily {
+  dateKey String @id
+  data    Json
+
+  @@map("usageDaily")
+}
+
+model RequestDetail {
+  id           String   @id
+  timestamp    DateTime
+  provider     String?
+  model        String?
+  connectionId String?
+  status       String?
+  data         Json
+
+  @@index([timestamp(sort: Desc)])
+  @@index([provider])
+  @@index([model])
+  @@index([connectionId])
+  @@map("requestDetails")
+}
+
+model ChatSession {
+  id           String   @id
+  title        String   @default("New chat")
+  mode         String?
+  requestModel String?
+  modelLabel   String?
+  messages     Json
+  createdAt    DateTime
+  updatedAt    DateTime
+
+  @@index([updatedAt(sort: Desc)])
+  @@map("chatSessions")
+}
