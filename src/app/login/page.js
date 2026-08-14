@@ -12,8 +12,11 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [hasPassword, setHasPassword] = useState(null);
   const [authMode, setAuthMode] = useState("password");
+  const [ssoType, setSsoType] = useState("oidc");
   const [oidcConfigured, setOidcConfigured] = useState(false);
   const [oidcLoginLabel, setOidcLoginLabel] = useState("Sign in with OIDC");
+  const [samlConfigured, setSamlConfigured] = useState(false);
+  const [samlLoginLabel, setSamlLoginLabel] = useState("Sign in with SAML SSO");
   const [mustChange, setMustChange] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [accessControlEnabled, setAccessControlEnabled] = useState(false);
@@ -50,6 +53,7 @@ export default function LoginPage() {
           }
           setHasPassword(!!data.hasPassword);
           setAuthMode(data.authMode || "password");
+          setSsoType(data.ssoType || "oidc");
           setOidcConfigured(data.oidcConfigured === true);
           setOidcLoginLabel(data.oidcLoginLabel || "Sign in with OIDC");
           setAccessControlEnabled(!!data.accessControlEnabled);
@@ -197,13 +201,19 @@ export default function LoginPage() {
             </form>
           ) : (
           <div className="flex flex-col gap-4">
+            {samlAvailable && (
+              <Button type="button" variant="primary" className="w-full" onClick={handleSamlLogin}>
+                {samlLoginLabel}
+              </Button>
+            )}
+
             {oidcAvailable && (
               <Button type="button" variant="primary" className="w-full" onClick={handleOidcLogin}>
                 {oidcLoginLabel}
               </Button>
             )}
 
-            {oidcAvailable && passwordAvailable && <div className="h-px bg-border/60" />}
+            {ssoAvailable && passwordAvailable && <div className="h-px bg-border/60" />}
 
             {passwordAvailable ? (
               <form onSubmit={handleLogin} className="flex flex-col gap-4">

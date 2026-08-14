@@ -3,6 +3,7 @@ import { getSettings, countUsers, getUserByEmail, verifyUserPassword } from "@/l
 import { cookies } from "next/headers";
 import { setDashboardAuthCookie } from "@/lib/auth/dashboardSession";
 import { isOidcConfigured } from "@/lib/auth/oidc";
+import { isSamlConfigured } from "@/lib/auth/saml.js";
 import { checkLock, recordFail, recordSuccess, getClientIp } from "@/lib/auth/loginLimiter";
 import { isLocalRequest } from "@/dashboardGuard";
 import { permissionsFromUser, fullPermissions } from "@/lib/auth/accessControl";

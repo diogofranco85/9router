@@ -27,6 +27,7 @@ const PUBLIC_API_PATHS = [
   "/api/auth/logout",
   "/api/auth/status",
   "/api/auth/oidc",
+  "/api/auth/saml",
   "/api/version",
   "/api/settings/require-login",
 ];
@@ -71,8 +72,28 @@ const CHANGE_PASSWORD_PATHS = [
 
 function isLoopbackHostname(h) {
   if (!h) return false;
-  const name = h.split(":")[0].replace(/^\[|\]$/g, "").toLowerCase();
+  let name = String(h).trim().toLowerCase();
+  if (name.startsWith("[")) {
+    const end = name.indexOf("]");
+    if (end === -1) return false;
+    name = name.slice(1, end);
+  } else if (name.indexOf(":") !== -1 && name.indexOf(":") === name.lastIndexOf(":")) {
+    name = name.slice(0, name.indexOf(":"));
+  }
+  if (name.startsWith("::ffff:")) name = name.slice(7);
   return LOOPBACK_HOSTS.has(name);
+}
+
+function isLoopbackPeer(request) {
+  if (hasTrustedPeerHeaders(request)) {
+    return isLoopbackHostname(request.headers.get("x-9r-real-ip"));
+  }
+  // Bare `next dev` forks its server, so the wrapper never loads and no peer address
+  // reaches us. Host is spoofable, so this stays confined to development.
+  if (process.env.NODE_ENV === "development") {
+    return isLoopbackHostname(request.headers.get("host"));
+  }
+  return false;
 }
 
 export function isLocalRequest(request) {

@@ -29,8 +29,11 @@ export async function GET() {
     return NextResponse.json({
       requireLogin,
       authMode,
+      ssoType,
       oidcConfigured: isOidcConfigured(settings),
       oidcLoginLabel: (settings.oidcLoginLabel || "Sign in with OIDC").trim() || "Sign in with OIDC",
+      samlConfigured: isSamlConfigured(settings),
+      samlLoginLabel: (settings.samlLoginLabel || "Sign in with SAML SSO").trim() || "Sign in with SAML SSO",
       hasPassword: !!settings.password,
       accessControlEnabled,
       blockEnvPassword: settings.blockEnvPassword === true,
@@ -47,13 +50,19 @@ export async function GET() {
       oidcName: session?.name && session?.oidc ? session.name : null,
       oidcEmail: session?.email && session?.oidc ? session.email : null,
       oidcLogin: !!session?.oidc,
+      samlName: samlName || null,
+      samlEmail: samlEmail || null,
+      samlLogin: !!session?.saml,
     });
   } catch {
     return NextResponse.json({
       requireLogin: true,
       authMode: "password",
+      ssoType: "oidc",
       oidcConfigured: false,
       oidcLoginLabel: "Sign in with OIDC",
+      samlConfigured: false,
+      samlLoginLabel: "Sign in with SAML SSO",
       hasPassword: false,
       accessControlEnabled: false,
       blockEnvPassword: false,
@@ -70,6 +79,9 @@ export async function GET() {
       oidcName: null,
       oidcEmail: null,
       oidcLogin: false,
+      samlName: null,
+      samlEmail: null,
+      samlLogin: false,
     });
   }
 }
