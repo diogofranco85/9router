@@ -36,6 +36,7 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+!.env.gcp.example
 
 # vercel
 .vercel
@@ -49,12 +50,11 @@ src/lib/db/generated/
 
 .bin/*
 data/
-logs/*
-source/*
-.cursor/*
-docs/*
-!docs/ARCHITECTURE.md
-test/*
+# Runtime logs (repo root only — do not ignore API routes under **/logs/)
+/logs/*
+
+# Local/unit test fixtures at repo root (do not ignore Next API routes under **/test/)
+/test/*
 open-sse/test/*
 RM.vn.md
 RM.md

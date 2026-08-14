@@ -1,0 +1,30 @@
+# Cloud Build config for 9Router — enables BuildKit (required by Dockerfile --mount).
+#
+# Used by: scripts/deploy-gcp-cloud-run.sh
+# Manual:
+#   gcloud builds submit --config=cloudbuild.yaml \
+#     --substitutions=_IMAGE=REGION-docker.pkg.dev/PROJECT/REPO/SERVICE:TAG
+
+substitutions:
+  _IMAGE: "nine-router:local"
+  _IMAGE_LATEST: "nine-router:latest"
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - --tag=${_IMAGE}
+      - --tag=${_IMAGE_LATEST}
+      - .
+
+images:
+  - ${_IMAGE}
+  - ${_IMAGE_LATEST}
+
+timeout: 1200s
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8

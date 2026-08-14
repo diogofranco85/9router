@@ -20,7 +20,7 @@ const nextConfig = {
   // letter). That throw happens at module scope, so every consumer of `open` dies on
   // import — including xAI/Grok token refresh, which loads the OAuth service that imports
   // it. Keeping it external preserves the real `import.meta.url` at runtime.
-  serverExternalPackages: ["@prisma/client", "prisma", "open"],
+  serverExternalPackages: ["@prisma/client", "prisma", "open", "better-sqlite3"],
   turbopack: {
     root: tracingRoot
   },
@@ -38,7 +38,8 @@ const nextConfig = {
     // Cache fetch responses across HMR refreshes for faster dev reloads.
     serverComponentsHmrCache: true,
     // Tree-shake heavy barrel imports to cut compile + bundle size
-    optimizePackageImports: ["@xyflow/react", "@dnd-kit/core", "@dnd-kit/sortable", "material-symbols", "marked"],
+    // Do not include "marked" — Marked vs marked casing breaks webpack barrel loader on Linux.
+    optimizePackageImports: ["@xyflow/react", "@dnd-kit/core", "@dnd-kit/sortable", "material-symbols"],
   },
   webpack: (config, { isServer }) => {
     // Ignore fs/path modules in browser bundle
@@ -48,6 +49,18 @@ const nextConfig = {
         fs: false,
         path: false,
       };
+    } else {
+      // Optional native module used only for local Cursor DB import (LOCAL_ONLY).
+      // Not in package.json — keep build working on Cloud Run / Docker without it.
+      config.externals = [
+        ...(Array.isArray(config.externals) ? config.externals : [config.externals].filter(Boolean)),
+        ({ request }, callback) => {
+          if (request === "better-sqlite3") {
+            return callback(null, "commonjs " + request);
+          }
+          return callback();
+        },
+      ];
     }
     // Exclude non-source dirs from watcher to reduce inotify load
     config.watchOptions = {

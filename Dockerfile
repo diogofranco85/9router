@@ -10,8 +10,9 @@ RUN apk --no-cache upgrade && apk --no-cache add python3 make g++ linux-headers
 COPY package.json ./
 COPY prisma ./prisma
 COPY scripts/prisma-generate.mjs ./scripts/prisma-generate.mjs
-# Dummy URL so prisma generate succeeds at build time (runtime uses real DATABASE_URL)
+# Dummy DB so prisma generate + next build page collection succeed (runtime overrides)
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
+ENV DATABASE_PROVIDER=postgres
 RUN --mount=type=cache,target=/root/.npm \
   npm install
 

@@ -20,7 +20,8 @@
     "prisma:migrate:postgres": "prisma migrate deploy --schema prisma/postgres/schema.prisma",
     "prisma:migrate:dev:postgres": "prisma migrate dev --schema prisma/postgres/schema.prisma",
     "prisma:push:mongodb": "prisma db push --schema prisma/mongodb/schema.prisma",
-    "prisma:smoke": "node scripts/smoke-prisma.mjs"
+    "prisma:smoke": "node scripts/smoke-prisma.mjs",
+    "deploy:gcp": "bash scripts/deploy-gcp-cloud-run.sh"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
