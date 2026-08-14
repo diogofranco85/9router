@@ -1,6 +1,7 @@
 // Public API barrel — all DB functions
-import { getAdapter } from "./driver.js";
-import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
+import { getPrisma } from "./client.js";
+import { asJson, asObject, toDate, toIso } from "./helpers/dates.js";
+import { upsertKv } from "./helpers/kvStore.js";
 
 // Settings
 export {
@@ -27,9 +28,17 @@ export {
   createProxyPool, updateProxyPool, deleteProxyPool,
 } from "./repos/proxyPoolsRepo.js";
 
+// Users (access control)
+export {
+  countUsers, countDashboardUsers, getUsers, getUserById, getUserByEmail,
+  createUser, updateUser, setUserPassword, resetUserPassword, deleteUser,
+  generateRandomPassword, hashPassword, verifyUserPassword,
+} from "./repos/usersRepo.js";
+
 // API keys
 export {
-  getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  getApiKeys, getApiKeysByUserId, getApiKeyById, getApiKeyByKey,
+  createApiKey, updateApiKey, deleteApiKey, validateApiKey,
 } from "./repos/apiKeysRepo.js";
 
 // Combos
@@ -37,6 +46,13 @@ export {
   getCombos, getComboById, getComboByName,
   createCombo, updateCombo, deleteCombo,
 } from "./repos/combosRepo.js";
+
+// Chat sessions
+export {
+  getChatSessions, getChatSessionById,
+  createChatSession, updateChatSession, upsertChatSession,
+  deleteChatSession, importChatSessions,
+} from "./repos/chatRepo.js";
 
 // Aliases (model + custom + mitm)
 export {
@@ -67,28 +83,156 @@ export {
   saveRequestDetail, getRequestDetails, getRequestDetailById, getDistinctProviders,
 } from "./repos/requestDetailsRepo.js";
 
-// Export/import full DB
+function splitConn(c) {
+  const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
+  return {
+    id,
+    provider,
+    authType: authType || "oauth",
+    name: name || null,
+    email: email || null,
+    priority: priority ?? null,
+    isActive: isActive !== false,
+    data: rest,
+    createdAt: toDate(createdAt || new Date().toISOString()),
+    updatedAt: toDate(updatedAt || new Date().toISOString()),
+  };
+}
+
+function splitNode(n) {
+  const { id, type, name, createdAt, updatedAt, ...rest } = n;
+  return {
+    id,
+    type: type || null,
+    name: name || null,
+    data: rest,
+    createdAt: toDate(createdAt || new Date().toISOString()),
+    updatedAt: toDate(updatedAt || new Date().toISOString()),
+  };
+}
+
+function splitPool(p) {
+  const { id, isActive, testStatus, createdAt, updatedAt, ...rest } = p;
+  return {
+    id,
+    isActive: isActive !== false,
+    testStatus: testStatus || "unknown",
+    data: rest,
+    createdAt: toDate(createdAt || new Date().toISOString()),
+    updatedAt: toDate(updatedAt || new Date().toISOString()),
+  };
+}
+
 export async function exportDb() {
-  const db = await getAdapter();
+  const prisma = await getPrisma();
   const { exportSettings } = await import("./repos/settingsRepo.js");
+
+  const [
+    connections,
+    nodes,
+    pools,
+    apiKeys,
+    users,
+    combos,
+    chatSessions,
+    aliases,
+    customs,
+    mitm,
+    pricing,
+  ] = await Promise.all([
+    prisma.providerConnection.findMany(),
+    prisma.providerNode.findMany(),
+    prisma.proxyPool.findMany(),
+    prisma.apiKey.findMany(),
+    prisma.user.findMany(),
+    prisma.combo.findMany(),
+    prisma.chatSession.findMany({ orderBy: { updatedAt: "desc" } }),
+    prisma.kv.findMany({ where: { scope: "modelAliases" } }),
+    prisma.kv.findMany({ where: { scope: "customModels" } }),
+    prisma.kv.findMany({ where: { scope: "mitmAlias" } }),
+    prisma.kv.findMany({ where: { scope: "pricing" } }),
+  ]);
 
   const out = {
     settings: await exportSettings(),
-    providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt })),
-    combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
+    providerConnections: connections.map((r) => ({
+      ...asObject(r.data),
+      id: r.id,
+      provider: r.provider,
+      authType: r.authType,
+      name: r.name,
+      email: r.email,
+      priority: r.priority,
+      isActive: r.isActive === true,
+      createdAt: toIso(r.createdAt),
+      updatedAt: toIso(r.updatedAt),
+    })),
+    providerNodes: nodes.map((r) => ({
+      ...asObject(r.data),
+      id: r.id,
+      type: r.type,
+      name: r.name,
+      createdAt: toIso(r.createdAt),
+      updatedAt: toIso(r.updatedAt),
+    })),
+    proxyPools: pools.map((r) => ({
+      ...asObject(r.data),
+      id: r.id,
+      isActive: r.isActive === true,
+      testStatus: r.testStatus,
+      createdAt: toIso(r.createdAt),
+      updatedAt: toIso(r.updatedAt),
+    })),
+    apiKeys: apiKeys.map((r) => ({
+      id: r.id,
+      key: r.key,
+      name: r.name,
+      machineId: r.machineId,
+      userId: r.userId || null,
+      isActive: r.isActive === true,
+      createdAt: toIso(r.createdAt),
+    })),
+    users: users.map((r) => ({
+      id: r.id,
+      email: r.email,
+      name: r.name || null,
+      passwordHash: r.passwordHash,
+      mustChangePassword: r.mustChangePassword === true,
+      isBlocked: r.isBlocked === true,
+      permDashboard: r.permDashboard !== false,
+      permChat: r.permChat !== false,
+      permApi: r.permApi !== false,
+      createdAt: toIso(r.createdAt),
+      updatedAt: toIso(r.updatedAt),
+    })),
+    combos: combos.map((r) => ({
+      id: r.id,
+      name: r.name,
+      kind: r.kind,
+      models: asJson(r.models, []),
+      createdAt: toIso(r.createdAt),
+      updatedAt: toIso(r.updatedAt),
+    })),
+    chatSessions: chatSessions.map((r) => ({
+      id: r.id,
+      title: r.title || "New chat",
+      mode: r.mode || null,
+      requestModel: r.requestModel || "",
+      modelLabel: r.modelLabel || "",
+      messages: asJson(r.messages, []),
+      createdAt: toIso(r.createdAt),
+      updatedAt: toIso(r.updatedAt),
+    })),
     modelAliases: {},
     customModels: [],
     mitmAlias: {},
     pricing: {},
   };
 
-  for (const r of db.all(`SELECT key, value FROM kv WHERE scope = 'modelAliases'`)) out.modelAliases[r.key] = parseJson(r.value);
-  for (const r of db.all(`SELECT key, value FROM kv WHERE scope = 'customModels'`)) out.customModels.push(parseJson(r.value));
-  for (const r of db.all(`SELECT key, value FROM kv WHERE scope = 'mitmAlias'`)) out.mitmAlias[r.key] = parseJson(r.value);
-  for (const r of db.all(`SELECT key, value FROM kv WHERE scope = 'pricing'`)) out.pricing[r.key] = parseJson(r.value);
+  for (const r of aliases) out.modelAliases[r.key] = asJson(r.value);
+  for (const r of customs) out.customModels.push(asJson(r.value));
+  for (const r of mitm) out.mitmAlias[r.key] = asJson(r.value);
+  for (const r of pricing) out.pricing[r.key] = asJson(r.value);
 
   return out;
 }
@@ -97,75 +241,112 @@ export async function importDb(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("Invalid database payload");
   }
-  const db = await getAdapter();
+  const prisma = await getPrisma();
 
-  db.transaction(() => {
-    // Wipe all tables (keep _meta)
-    db.run(`DELETE FROM settings`);
-    db.run(`DELETE FROM providerConnections`);
-    db.run(`DELETE FROM providerNodes`);
-    db.run(`DELETE FROM proxyPools`);
-    db.run(`DELETE FROM apiKeys`);
-    db.run(`DELETE FROM combos`);
-    db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing')`);
+  await prisma.$transaction(async (tx) => {
+    await tx.settings.deleteMany();
+    await tx.providerConnection.deleteMany();
+    await tx.providerNode.deleteMany();
+    await tx.proxyPool.deleteMany();
+    await tx.apiKey.deleteMany();
+    await tx.user.deleteMany();
+    await tx.combo.deleteMany();
+    await tx.chatSession.deleteMany();
+    await tx.kv.deleteMany({
+      where: { scope: { in: ["modelAliases", "customModels", "mitmAlias", "pricing"] } },
+    });
 
-    // Settings
     if (payload.settings) {
-      db.run(`INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`, [stringifyJson(payload.settings)]);
+      await tx.settings.create({
+        data: { id: 1, data: payload.settings },
+      });
+    } else {
+      await tx.settings.create({ data: { id: 1, data: {} } });
     }
 
     for (const c of payload.providerConnections || []) {
-      const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
-      db.run(
-        `INSERT OR REPLACE INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, provider, authType || "oauth", name || null, email || null, priority || null, isActive === false ? 0 : 1, stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
-      );
+      await tx.providerConnection.create({ data: splitConn(c) });
     }
     for (const n of payload.providerNodes || []) {
-      const { id, type, name, createdAt, updatedAt, ...rest } = n;
-      db.run(
-        `INSERT OR REPLACE INTO providerNodes(id, type, name, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [id, type || null, name || null, stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
-      );
+      await tx.providerNode.create({ data: splitNode(n) });
     }
     for (const p of payload.proxyPools || []) {
-      const { id, isActive, testStatus, createdAt, updatedAt, ...rest } = p;
-      db.run(
-        `INSERT OR REPLACE INTO proxyPools(id, isActive, testStatus, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [id, isActive === false ? 0 : 1, testStatus || "unknown", stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
-      );
+      await tx.proxyPool.create({ data: splitPool(p) });
     }
     for (const k of payload.apiKeys || []) {
-      db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
-      );
+      await tx.apiKey.create({
+        data: {
+          id: k.id,
+          key: k.key,
+          name: k.name || null,
+          machineId: k.machineId || null,
+          userId: k.userId || null,
+          isActive: k.isActive !== false,
+          createdAt: toDate(k.createdAt || new Date().toISOString()),
+        },
+      });
+    }
+    for (const u of payload.users || []) {
+      await tx.user.create({
+        data: {
+          id: u.id,
+          email: u.email,
+          name: u.name || null,
+          passwordHash: u.passwordHash,
+          mustChangePassword: u.mustChangePassword !== false,
+          isBlocked: u.isBlocked === true,
+          permDashboard: u.permDashboard !== false,
+          permChat: u.permChat !== false,
+          permApi: u.permApi !== false,
+          createdAt: toDate(u.createdAt || new Date().toISOString()),
+          updatedAt: toDate(u.updatedAt || new Date().toISOString()),
+        },
+      });
     }
     for (const c of payload.combos || []) {
-      db.run(
-        `INSERT OR REPLACE INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [c.id, c.name, c.kind || null, stringifyJson(c.models || []), c.createdAt || new Date().toISOString(), c.updatedAt || new Date().toISOString()]
-      );
+      await tx.combo.create({
+        data: {
+          id: c.id,
+          name: c.name,
+          kind: c.kind || null,
+          models: c.models || [],
+          createdAt: toDate(c.createdAt || new Date().toISOString()),
+          updatedAt: toDate(c.updatedAt || new Date().toISOString()),
+        },
+      });
+    }
+    for (const s of payload.chatSessions || []) {
+      await tx.chatSession.create({
+        data: {
+          id: s.id,
+          title: s.title || "New chat",
+          mode: s.mode || null,
+          requestModel: s.requestModel || null,
+          modelLabel: s.modelLabel || null,
+          messages: Array.isArray(s.messages) ? s.messages : [],
+          createdAt: toDate(s.createdAt || new Date().toISOString()),
+          updatedAt: toDate(s.updatedAt || new Date().toISOString()),
+        },
+      });
     }
     for (const [a, m] of Object.entries(payload.modelAliases || {})) {
-      db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('modelAliases', ?, ?)`, [a, stringifyJson(m)]);
+      await upsertKv(tx, "modelAliases", a, m);
     }
     for (const m of payload.customModels || []) {
       const k = `${m.providerAlias}|${m.id}|${m.type || "llm"}`;
-      db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, stringifyJson(m)]);
+      await upsertKv(tx, "customModels", k, m);
     }
     for (const [tool, mappings] of Object.entries(payload.mitmAlias || {})) {
-      db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('mitmAlias', ?, ?)`, [tool, stringifyJson(mappings || {})]);
+      await upsertKv(tx, "mitmAlias", tool, mappings || {});
     }
     for (const [provider, models] of Object.entries(payload.pricing || {})) {
-      db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('pricing', ?, ?)`, [provider, stringifyJson(models || {})]);
+      await upsertKv(tx, "pricing", provider, models || {});
     }
   });
 
   return await exportDb();
 }
 
-// Eager init helper (optional)
 export async function initDb() {
-  await getAdapter();
+  await getPrisma();
 }

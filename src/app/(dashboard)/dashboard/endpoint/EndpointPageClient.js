@@ -644,29 +644,6 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  const handleDeleteKey = async (id) => {
-    setConfirmState({
-      title: "Delete API Key",
-      message: "Delete this API key?",
-      onConfirm: async () => {
-        setConfirmState(null);
-        try {
-          const res = await fetch(`/api/keys/${id}`, { method: "DELETE" });
-          if (res.ok) {
-            setKeys(keys.filter((k) => k.id !== id));
-            setVisibleKeys(prev => {
-              const next = new Set(prev);
-              next.delete(id);
-              return next;
-            });
-          }
-        } catch (error) {
-          console.log("Error deleting key:", error);
-        }
-      }
-    });
-  };
-
   const handleToggleKey = async (id, isActive) => {
     try {
       const res = await fetch(`/api/keys/${id}`, {
@@ -1063,12 +1040,6 @@ export default function APIPageClient({ machineId }) {
                     }}
                     title={key.isActive ? "Pause key" : "Resume key"}
                   />
-                  <button
-                    onClick={() => handleDeleteKey(key.id)}
-                    className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
                 </div>
               </div>
             ))}

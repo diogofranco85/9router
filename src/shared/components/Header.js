@@ -148,6 +148,20 @@ const getPageInfo = (pathname) => {
       icon: "api",
       breadcrumbs: [],
     };
+  if (pathname.includes("/access-control"))
+    return {
+      title: "Access Control",
+      description: "Manage users, permissions, and login settings",
+      icon: "manage_accounts",
+      breadcrumbs: [],
+    };
+  if (pathname.includes("/account"))
+    return {
+      title: "Account",
+      description: "Change password and manage your API keys",
+      icon: "person",
+      breadcrumbs: [],
+    };
   if (pathname.includes("/profile"))
     return {
       title: "Settings",

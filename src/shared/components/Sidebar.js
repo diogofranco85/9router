@@ -35,6 +35,8 @@ const debugItems = [
 ];
 
 const systemItems = [
+  { href: "/dashboard/access-control", label: "Access Control", icon: "manage_accounts" },
+  { href: "/account", label: "Account", icon: "person" },
   { href: "/dashboard/proxy-pools", label: "Proxy Pools", icon: "lan" },
   { href: "/dashboard/skills", label: "Skills", icon: "extension" },
 ];
@@ -343,6 +345,24 @@ export default function Sidebar({ onClose }) {
               </span>
               <span className="text-[13px] font-medium">Settings</span>
             </Link>
+
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const res = await fetch("/api/auth/logout", { method: "POST" });
+                  if (res.ok) window.location.assign("/login");
+                } catch {
+                  window.location.assign("/login");
+                }
+              }}
+              className="flex items-center gap-3 px-3 py-1 rounded-lg transition-all group w-full text-left text-text-muted hover:bg-red-500/10 hover:text-red-500"
+            >
+              <span className="material-symbols-outlined text-[18px] group-hover:text-red-500 transition-colors">
+                logout
+              </span>
+              <span className="text-[13px] font-medium">Logout</span>
+            </button>
           </div>
         </nav>
 

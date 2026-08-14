@@ -1,5 +1,5 @@
-import { getAdapter } from "../driver.js";
-import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { getPrisma } from "../client.js";
+import { asObject } from "../helpers/dates.js";
 
 const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20128";
 const DEFAULT_HEADROOM_URL = process.env.HEADROOM_URL || "http://localhost:8787";
@@ -25,6 +25,8 @@ const DEFAULT_SETTINGS = {
   },
   requireLogin: true,
   requireApiKey: true,
+  accessControlEnabled: false,
+  blockEnvPassword: false,
   tunnelDashboardAccess: true,
   authMode: "password",
   ssoType: "oidc",
@@ -64,13 +66,12 @@ const DEFAULT_SETTINGS = {
 };
 
 async function readRaw() {
-  const db = await getAdapter();
-  const row = db.get(`SELECT data FROM settings WHERE id = 1`);
-  return row ? parseJson(row.data, {}) : {};
+  const prisma = await getPrisma();
+  const row = await prisma.settings.findUnique({ where: { id: 1 } });
+  return row ? asObject(row.data) : {};
 }
 
-// Merge raw settings with defaults; backward-compat for missing keys
-export function mergeWithDefaults(raw) {
+function mergeWithDefaults(raw) {
   const merged = { ...DEFAULT_SETTINGS, ...(raw || {}) };
   for (const [key, defVal] of Object.entries(DEFAULT_SETTINGS)) {
     if (merged[key] === undefined) {
@@ -93,18 +94,18 @@ export async function getSettings() {
   return mergeWithDefaults(raw);
 }
 
-// Atomic read-merge-write inside transaction (prevents losing concurrent updates)
 export async function updateSettings(updates) {
-  const db = await getAdapter();
-  let next;
-  db.transaction(function () {
-    const row = db.get(`SELECT data FROM settings WHERE id = 1`);
-    const current = row ? parseJson(row.data, {}) : {};
-    next = { ...current, ...updates };
-    db.run(
-      `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
-      [stringifyJson(next)],
-    );
+  const prisma = await getPrisma();
+  const next = await prisma.$transaction(async (tx) => {
+    const row = await tx.settings.findUnique({ where: { id: 1 } });
+    const current = row ? asObject(row.data) : {};
+    const merged = { ...current, ...updates };
+    await tx.settings.upsert({
+      where: { id: 1 },
+      create: { id: 1, data: merged },
+      update: { data: merged },
+    });
+    return merged;
   });
   return mergeWithDefaults(next);
 }
