@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSettings, countUsers } from "@/lib/localDb";
 import { isOidcConfigured } from "@/lib/auth/oidc";
-import { isSamlConfigured } from "@/lib/auth/saml";
+import { isSamlConfigured } from "@/lib/auth/saml.js";
 import { getAccessSession, isEnvPasswordBlocked } from "@/lib/auth/accessControl";
 
 export async function GET() {
@@ -23,6 +23,9 @@ export async function GET() {
     } else if (session?.oidc) {
       displayName = session.name || session.email || "OIDC user";
       loginMethod = "OIDC";
+    } else if (session?.saml) {
+      displayName = session.name || session.email || "SAML user";
+      loginMethod = "SAML";
     } else if (session?.isLegacyAdmin) {
       displayName = "Admin";
       loginMethod = "Password";
@@ -52,8 +55,8 @@ export async function GET() {
       oidcName: session?.name && session?.oidc ? session.name : null,
       oidcEmail: session?.email && session?.oidc ? session.email : null,
       oidcLogin: !!session?.oidc,
-      samlName: samlName || null,
-      samlEmail: samlEmail || null,
+      samlName: session?.name && session?.saml ? session.name : null,
+      samlEmail: session?.email && session?.saml ? session.email : null,
       samlLogin: !!session?.saml,
     });
   } catch {

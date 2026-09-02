@@ -51,16 +51,17 @@ export async function getAccessSession(request = null) {
     };
   }
 
-  // Shared password / OIDC session
+  // Shared password / OIDC / SAML session
   return {
     authenticated: true,
     isLegacyAdmin: true,
     userId: null,
-    email: payload.oidcEmail || null,
-    name: payload.oidcName || null,
+    email: payload.oidcEmail || payload.samlEmail || null,
+    name: payload.oidcName || payload.samlName || null,
     mustChangePassword: false,
     permissions: fullPermissions(),
     oidc: !!payload.oidc,
+    saml: !!payload.saml,
     user: null,
   };
 }

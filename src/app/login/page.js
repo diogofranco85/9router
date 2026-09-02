@@ -152,8 +152,10 @@ export default function LoginPage() {
     window.location.href = "/api/auth/saml/start";
   };
 
-  const oidcAvailable = oidcConfigured && ssoType === "oidc" && ["oidc", "both"].includes(authMode) && !accessControlEnabled;
-  const samlAvailable = samlConfigured && ssoType === "saml" && ["oidc", "both"].includes(authMode) && !accessControlEnabled;
+  const oidcAvailable =
+    oidcConfigured && ssoType === "oidc" && ["oidc", "both"].includes(authMode) && !accessControlEnabled;
+  const samlAvailable =
+    samlConfigured && ssoType === "saml" && ["oidc", "both"].includes(authMode) && !accessControlEnabled;
   const ssoAvailable = oidcAvailable || samlAvailable;
   const passwordAvailable = authMode !== "oidc" || !(oidcConfigured || samlConfigured) || accessControlEnabled;
   const showEmailField = accessControlEnabled;

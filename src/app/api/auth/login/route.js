@@ -44,8 +44,12 @@ export async function POST(request) {
       return NextResponse.json({ error: "Dashboard access via tunnel is disabled" }, { status: 403 });
     }
 
-    if (settings.authMode === "oidc" && isOidcConfigured(settings) && !settings.accessControlEnabled) {
-      return NextResponse.json({ error: "Password login is disabled. Use OIDC sign in." }, { status: 403 });
+    if (
+      settings.authMode === "oidc" &&
+      (settings.ssoType === "saml" ? isSamlConfigured(settings) : isOidcConfigured(settings)) &&
+      !settings.accessControlEnabled
+    ) {
+      return NextResponse.json({ error: "Password login is disabled. Use SSO sign in." }, { status: 403 });
     }
 
     const accessControlEnabled = settings.accessControlEnabled === true;
@@ -108,8 +112,12 @@ export async function POST(request) {
       // (already checked above)
     }
 
-    if (settings.authMode === "oidc" && isOidcConfigured(settings) && !accessControlEnabled) {
-      return NextResponse.json({ error: "Password login is disabled. Use OIDC sign in." }, { status: 403 });
+    if (
+      settings.authMode === "oidc" &&
+      (settings.ssoType === "saml" ? isSamlConfigured(settings) : isOidcConfigured(settings)) &&
+      !accessControlEnabled
+    ) {
+      return NextResponse.json({ error: "Password login is disabled. Use SSO sign in." }, { status: 403 });
     }
 
     const storedHash = settings.password;
