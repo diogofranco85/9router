@@ -247,7 +247,7 @@ const config = {
       "value": "prisma-client-js"
     },
     "output": {
-      "value": "/home/antoniofranco/Documentos/diogo/desenvolvimento/9router/src/lib/db/generated/mongodb",
+      "value": "/home/antoniofranco/Documentos/9router/src/lib/db/generated/mongodb",
       "fromEnvVar": null
     },
     "config": {
@@ -261,12 +261,11 @@ const config = {
       }
     ],
     "previewFeatures": [],
-    "sourceFilePath": "/home/antoniofranco/Documentos/diogo/desenvolvimento/9router/prisma/mongodb/schema.prisma",
+    "sourceFilePath": "/home/antoniofranco/Documentos/9router/prisma/mongodb/schema.prisma",
     "isCustomOutput": true
   },
   "relativeEnvPaths": {
-    "rootEnvPath": null,
-    "schemaEnvPath": "../../../../../.env"
+    "rootEnvPath": null
   },
   "relativePath": "../../../../../prisma/mongodb",
   "clientVersion": "6.19.3",
