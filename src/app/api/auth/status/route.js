@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSettings, countUsers } from "@/lib/localDb";
 import { isOidcConfigured } from "@/lib/auth/oidc";
+import { isSamlConfigured } from "@/lib/auth/saml";
 import { getAccessSession, isEnvPasswordBlocked } from "@/lib/auth/accessControl";
 
 export async function GET() {
@@ -9,6 +10,7 @@ export async function GET() {
     const session = await getAccessSession();
     const requireLogin = settings.requireLogin !== false;
     const authMode = settings.authMode || "password";
+    const ssoType = settings.ssoType || "oidc";
     const accessControlEnabled = settings.accessControlEnabled === true;
     const userCount = accessControlEnabled ? await countUsers() : 0;
     const envPasswordBlocked = await isEnvPasswordBlocked();

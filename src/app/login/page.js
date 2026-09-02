@@ -56,6 +56,8 @@ export default function LoginPage() {
           setSsoType(data.ssoType || "oidc");
           setOidcConfigured(data.oidcConfigured === true);
           setOidcLoginLabel(data.oidcLoginLabel || "Sign in with OIDC");
+          setSamlConfigured(data.samlConfigured === true);
+          setSamlLoginLabel(data.samlLoginLabel || "Sign in with SAML SSO");
           setAccessControlEnabled(!!data.accessControlEnabled);
           setEnvPasswordBlocked(!!data.envPasswordBlocked);
         } else {
@@ -146,8 +148,14 @@ export default function LoginPage() {
     window.location.href = "/api/auth/oidc/start";
   };
 
-  const oidcAvailable = oidcConfigured && ["oidc", "both"].includes(authMode) && !accessControlEnabled;
-  const passwordAvailable = authMode !== "oidc" || !oidcConfigured || accessControlEnabled;
+  const handleSamlLogin = () => {
+    window.location.href = "/api/auth/saml/start";
+  };
+
+  const oidcAvailable = oidcConfigured && ssoType === "oidc" && ["oidc", "both"].includes(authMode) && !accessControlEnabled;
+  const samlAvailable = samlConfigured && ssoType === "saml" && ["oidc", "both"].includes(authMode) && !accessControlEnabled;
+  const ssoAvailable = oidcAvailable || samlAvailable;
+  const passwordAvailable = authMode !== "oidc" || !(oidcConfigured || samlConfigured) || accessControlEnabled;
   const showEmailField = accessControlEnabled;
   const sharedStillAllowed = accessControlEnabled && !envPasswordBlocked;
 
