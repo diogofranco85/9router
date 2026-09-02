@@ -34,9 +34,13 @@ const debugItems = [
   { href: "/dashboard/translator", label: "Translator", icon: "translate" },
 ];
 
-const systemItems = [
+const corporativoItems = [
+  { href: "/dashboard/projects", label: "Projects", icon: "folder_managed" },
   { href: "/dashboard/access-control", label: "Access Control", icon: "manage_accounts" },
   { href: "/account", label: "Account", icon: "person" },
+];
+
+const systemItems = [
   { href: "/dashboard/proxy-pools", label: "Proxy Pools", icon: "lan" },
   { href: "/dashboard/skills", label: "Skills", icon: "extension" },
 ];
@@ -44,6 +48,7 @@ const systemItems = [
 export default function Sidebar({ onClose }) {
   const pathname = usePathname();
   const [mediaOpen, setMediaOpen] = useState(false);
+  const [corporativoOpen, setCorporativoOpen] = useState(false);
   const [showRemoteModal, setShowRemoteModal] = useState(false);
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
@@ -76,6 +81,12 @@ export default function Sidebar({ onClose }) {
     }
     return pathname.startsWith(href);
   };
+
+  const corporativoActive = corporativoItems.some((item) => isActive(item.href));
+
+  useEffect(() => {
+    if (corporativoActive) setCorporativoOpen(true);
+  }, [corporativoActive]);
 
   // Open manual update panel (no countdown yet — user must click Copy to trigger shutdown)
   const handleUpdate = () => {
@@ -238,6 +249,44 @@ export default function Sidebar({ onClose }) {
                   <span className="material-symbols-outlined text-[16px]">{COMBINED_WEB_ITEM.icon}</span>
                   <span className="text-sm">{COMBINED_WEB_ITEM.label}</span>
                 </Link>
+              </div>
+            )}
+
+            {/* Corporativo accordion */}
+            <button
+              type="button"
+              onClick={() => setCorporativoOpen((v) => !v)}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
+                corporativoActive
+                  ? "bg-primary/10 text-primary"
+                  : "text-text-muted hover:bg-surface-2 hover:text-text-main"
+              )}
+            >
+              <span className="material-symbols-outlined text-[18px]">apartment</span>
+              <span className="text-[13px] font-medium flex-1 text-left">Corporativo</span>
+              <span className="material-symbols-outlined text-[14px] transition-transform" style={{ transform: corporativoOpen ? "rotate(180deg)" : "rotate(0deg)" }}>
+                expand_more
+              </span>
+            </button>
+            {corporativoOpen && (
+              <div className="pl-4">
+                {corporativoItems.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={onClose}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-1 rounded-lg transition-all group",
+                      isActive(item.href)
+                        ? "bg-primary/10 text-primary"
+                        : "text-text-muted hover:bg-surface-2 hover:text-text-main"
+                    )}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">{item.icon}</span>
+                    <span className="text-sm">{item.label}</span>
+                  </Link>
+                ))}
               </div>
             )}
 

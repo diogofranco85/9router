@@ -35,6 +35,12 @@ export {
   generateRandomPassword, hashPassword, verifyUserPassword,
 } from "./repos/usersRepo.js";
 
+// Projects (corporate)
+export {
+  getProjects, getProjectById, getProjectMap,
+  createProject, updateProject, deleteProject, countUsersByProject,
+} from "./repos/projectsRepo.js";
+
 // API keys
 export {
   getApiKeys, getApiKeysByUserId, getApiKeyById, getApiKeyByKey,

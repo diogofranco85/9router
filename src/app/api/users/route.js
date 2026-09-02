@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import {
-  getUsers, createUser, countUsers, countDashboardUsers,
+  getUsers, createUser, countUsers, countDashboardUsers, getProjects, getProjectById,
+  getSettings, updateSettings,
 } from "@/lib/localDb";
 import { requireSession, PERMS } from "@/lib/auth/accessControl";
-import { getSettings, updateSettings } from "@/lib/localDb";
 
 export const dynamic = "force-dynamic";
 
@@ -12,14 +12,16 @@ export async function GET() {
   if (gate.error) return gate.error;
 
   try {
-    const [users, settings, userCount, dashboardCount] = await Promise.all([
+    const [users, settings, userCount, dashboardCount, projects] = await Promise.all([
       getUsers(),
       getSettings(),
       countUsers(),
       countDashboardUsers(),
+      getProjects(),
     ]);
     return NextResponse.json({
       users,
+      projects,
       userCount,
       dashboardCount,
       accessControlEnabled: settings.accessControlEnabled === true,
@@ -38,9 +40,15 @@ export async function POST(request) {
     const body = await request.json();
     const email = typeof body?.email === "string" ? body.email : "";
     const name = typeof body?.name === "string" ? body.name : null;
+    const projectId = typeof body?.projectId === "string" && body.projectId ? body.projectId : null;
+    if (projectId) {
+      const project = await getProjectById(projectId);
+      if (!project) return NextResponse.json({ error: "Project not found" }, { status: 400 });
+    }
     const result = await createUser({
       email,
       name,
+      projectId,
       permDashboard: body?.permDashboard !== false,
       permChat: body?.permChat !== false,
       permApi: body?.permApi !== false,

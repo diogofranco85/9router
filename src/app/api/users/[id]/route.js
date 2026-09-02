@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  getUserById, updateUser, resetUserPassword, countDashboardUsers,
+  getUserById, updateUser, resetUserPassword, countDashboardUsers, getProjectById,
 } from "@/lib/localDb";
 import { requireSession, PERMS } from "@/lib/auth/accessControl";
 
@@ -36,6 +36,14 @@ export async function PUT(request, { params }) {
     if (body.permDashboard !== undefined) data.permDashboard = !!body.permDashboard;
     if (body.permChat !== undefined) data.permChat = !!body.permChat;
     if (body.permApi !== undefined) data.permApi = !!body.permApi;
+    if (body.projectId !== undefined) {
+      const projectId = body.projectId ? String(body.projectId) : null;
+      if (projectId) {
+        const project = await getProjectById(projectId);
+        if (!project) return NextResponse.json({ error: "Project not found" }, { status: 400 });
+      }
+      data.projectId = projectId;
+    }
 
     // Prevent lockout: last dashboard user cannot lose dashboard or be blocked while blockEnvPassword is on
     const losingDashboard =

@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { getPrisma } from "../client.js";
-import { toDate, toIso } from "../helpers/dates.js";
+import { toIso } from "../helpers/dates.js";
 
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
@@ -19,6 +19,7 @@ function rowToUser(row, { includeHash = false } = {}) {
     permDashboard: row.permDashboard !== false,
     permChat: row.permChat !== false,
     permApi: row.permApi !== false,
+    projectId: row.projectId || null,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };
@@ -93,6 +94,7 @@ export async function createUser({
   permDashboard = true,
   permChat = true,
   permApi = true,
+  projectId = null,
   mustChangePassword = true,
   isBlocked = false,
 } = {}) {
@@ -119,6 +121,7 @@ export async function createUser({
         permDashboard: permDashboard !== false,
         permChat: permChat !== false,
         permApi: permApi !== false,
+        projectId: projectId || null,
         createdAt: now,
         updatedAt: now,
       },
@@ -150,6 +153,7 @@ export async function updateUser(id, data = {}) {
       permDashboard: data.permDashboard !== undefined ? !!data.permDashboard : row.permDashboard,
       permChat: data.permChat !== undefined ? !!data.permChat : row.permChat,
       permApi: data.permApi !== undefined ? !!data.permApi : row.permApi,
+      projectId: data.projectId !== undefined ? (data.projectId || null) : row.projectId,
       passwordHash: data.passwordHash !== undefined ? data.passwordHash : row.passwordHash,
       updatedAt: new Date(),
     };

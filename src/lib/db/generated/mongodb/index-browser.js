@@ -165,6 +165,15 @@ exports.Prisma.UserScalarFieldEnum = {
   permDashboard: 'permDashboard',
   permChat: 'permChat',
   permApi: 'permApi',
+  projectId: 'projectId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+};
+
+exports.Prisma.ProjectScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  code: 'code',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 };
@@ -255,6 +264,7 @@ exports.Prisma.ModelName = {
   ProviderNode: 'ProviderNode',
   ProxyPool: 'ProxyPool',
   User: 'User',
+  Project: 'Project',
   ApiKey: 'ApiKey',
   Combo: 'Combo',
   Kv: 'Kv',

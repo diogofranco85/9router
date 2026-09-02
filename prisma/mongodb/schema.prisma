@@ -75,10 +75,23 @@ model User {
   permDashboard      Boolean  @default(true)
   permChat           Boolean  @default(true)
   permApi            Boolean  @default(true)
+  projectId          String?
   createdAt          DateTime
   updatedAt          DateTime
 
+  @@index([projectId])
   @@map("users")
+}
+
+model Project {
+  id        String   @id @map("_id")
+  name      String
+  code      String?
+  createdAt DateTime
+  updatedAt DateTime
+
+  @@index([code])
+  @@map("projects")
 }
 
 model ApiKey {

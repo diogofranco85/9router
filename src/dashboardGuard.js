@@ -261,7 +261,7 @@ async function enforceAccessPolicies(request, pathname) {
 
   // Management APIs require dashboard (users, settings, providers, keys list for admin, etc.)
   // User-scoped keys API is allowed for any authenticated user (own keys).
-  if (pathname.startsWith("/api/users")) {
+  if (pathname.startsWith("/api/users") || pathname.startsWith("/api/projects")) {
     if (!sessionHasPerm(session, "dashboard")) return forbidApi("Missing permission: dashboard");
   }
 

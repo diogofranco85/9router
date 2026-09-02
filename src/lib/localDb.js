@@ -13,6 +13,8 @@ export {
   countUsers, countDashboardUsers, getUsers, getUserById, getUserByEmail,
   createUser, updateUser, setUserPassword, resetUserPassword, deleteUser,
   generateRandomPassword, hashPassword, verifyUserPassword,
+  getProjects, getProjectById, getProjectMap,
+  createProject, updateProject, deleteProject, countUsersByProject,
   getApiKeys, getApiKeysByUserId, getApiKeyById, getApiKeyByKey,
   createApiKey, updateApiKey, deleteApiKey, validateApiKey,
   getCombos, getComboById, getComboByName,

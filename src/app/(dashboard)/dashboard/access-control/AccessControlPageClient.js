@@ -8,6 +8,7 @@ function emptyForm() {
   return {
     email: "",
     name: "",
+    projectId: "",
     permDashboard: true,
     permChat: true,
     permApi: true,
@@ -17,6 +18,7 @@ function emptyForm() {
 export default function AccessControlPageClient() {
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [userCount, setUserCount] = useState(0);
   const [accessControlEnabled, setAccessControlEnabled] = useState(false);
   const [blockEnvPassword, setBlockEnvPassword] = useState(false);
@@ -38,6 +40,7 @@ export default function AccessControlPageClient() {
       }
       const data = await res.json();
       setUsers(data.users || []);
+      setProjects(data.projects || []);
       setUserCount(data.userCount || 0);
       setAccessControlEnabled(!!data.accessControlEnabled);
       setBlockEnvPassword(!!data.blockEnvPassword);
@@ -106,6 +109,7 @@ export default function AccessControlPageClient() {
           permDashboard: editUser.permDashboard,
           permChat: editUser.permChat,
           permApi: editUser.permApi,
+          projectId: editUser.projectId || null,
         }),
       });
       const data = await res.json();
@@ -250,6 +254,8 @@ export default function AccessControlPageClient() {
                   <p className="text-sm font-medium truncate">{user.email}</p>
                   <p className="text-xs text-text-muted">
                     {user.name || "No name"}
+                    {" · "}
+                    {projects.find((p) => p.id === user.projectId)?.name || "Unassigned"}
                     {user.mustChangePassword ? " · Must change password" : ""}
                     {user.isBlocked ? " · Blocked" : ""}
                   </p>
@@ -307,6 +313,19 @@ export default function AccessControlPageClient() {
               placeholder="Optional display name"
             />
           </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium">Project</label>
+            <select
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+              value={form.projectId || ""}
+              onChange={(e) => setForm((f) => ({ ...f, projectId: e.target.value }))}
+            >
+              <option value="">Unassigned</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.code ? `${p.name} (${p.code})` : p.name}</option>
+              ))}
+            </select>
+          </div>
           <div className="flex flex-col gap-2 pt-1">
             <label className="text-sm font-medium">Permissions</label>
             {[
@@ -350,6 +369,19 @@ export default function AccessControlPageClient() {
                 value={editUser.name || ""}
                 onChange={(e) => setEditUser((u) => ({ ...u, name: e.target.value }))}
               />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium">Project</label>
+              <select
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+                value={editUser.projectId || ""}
+                onChange={(e) => setEditUser((u) => ({ ...u, projectId: e.target.value }))}
+              >
+                <option value="">Unassigned</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.code ? `${p.name} (${p.code})` : p.name}</option>
+                ))}
+              </select>
             </div>
             <div className="flex flex-col gap-2 pt-1">
               <label className="text-sm font-medium">Permissions</label>
