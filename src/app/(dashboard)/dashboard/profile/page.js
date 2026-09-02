@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, Button, Toggle, Input } from "@/shared/components";
 import { ConfirmModal } from "@/shared/components/Modal";
 import LanguageSwitcher from "@/shared/components/LanguageSwitcher";
@@ -43,6 +43,22 @@ export default function ProfilePage() {
   const [oidcTestLoading, setOidcTestLoading] = useState(false);
   const [oidcTestStatus, setOidcTestStatus] = useState({ type: "", message: "" });
   const [oidcExpanded, setOidcExpanded] = useState(false);
+  const [ssoTypeTab, setSsoTypeTab] = useState("saml");
+  const [samlForm, setSamlForm] = useState({
+    samlEntryPoint: "",
+    samlIssuer: "urn:9router:sp",
+    samlCert: "",
+    samlLoginLabel: "Sign in with SAML SSO",
+    samlAttributeEmail: "email",
+    samlAttributeName: "name",
+  });
+  const [samlStatus, setSamlStatus] = useState({ type: "", message: "" });
+  const [samlLoading, setSamlLoading] = useState(false);
+  const [samlTestLoading, setSamlTestLoading] = useState(false);
+  const [samlTestStatus, setSamlTestStatus] = useState({ type: "", message: "" });
+  const [showSamlGuide, setShowSamlGuide] = useState(false);
+  const idpMetadataFileRef = useRef(null);
+  const certFileRef = useRef(null);
   const [proxyForm, setProxyForm] = useState({
     outboundProxyEnabled: false,
     outboundProxyUrl: "",
@@ -637,6 +653,11 @@ export default function ProfilePage() {
       console.error("Failed to logout:", err);
     }
   };
+
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const samlAcsUrl = `${origin}/api/auth/saml/acs`;
+  const samlMetadataUrl = `${origin}/api/auth/saml/metadata`;
+  const oidcRedirectUri = `${origin}/api/auth/oidc/callback`;
 
   return (
     <div className="max-w-2xl mx-auto px-4 sm:px-0">
