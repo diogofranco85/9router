@@ -32,7 +32,9 @@ const PUBLIC_API_PATHS = [
   "/api/settings/require-login",
 ];
 
-const PUBLIC_PREFIXES = ["/v1", "/v1beta", "/api/v1", "/api/v1beta", "/codex"];
+// Public top-level prefixes (LLM API endpoints with their own API key auth).
+// Keep root-level rewrites here too: middleware runs before Next.js rewrites.
+const PUBLIC_PREFIXES = ["/v1", "/v1beta", "/api/v1", "/api/v1beta", "/codex", "/responses"];
 
 const ALWAYS_PROTECTED = [
   "/api/shutdown",
