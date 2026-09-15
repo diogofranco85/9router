@@ -10,6 +10,28 @@ const OPTIONAL_FIELDS = [
   "consecutiveUseCount", "idToken", "lastRefreshAt",
 ];
 
+const MODEL_LOCK_PREFIX = "modelLock_";
+
+function resetHealthStateOnActivation(existing, patch) {
+  if (patch?.testStatus !== "active") return patch;
+
+  const normalized = {
+    ...patch,
+    testStatus: "active",
+    lastError: Object.hasOwn(patch, "lastError") ? patch.lastError : null,
+    lastErrorAt: Object.hasOwn(patch, "lastErrorAt") ? patch.lastErrorAt : null,
+    errorCode: null,
+    rateLimitedUntil: null,
+    backoffLevel: 0,
+  };
+
+  for (const key of Object.keys(existing || {})) {
+    if (key.startsWith(MODEL_LOCK_PREFIX)) normalized[key] = null;
+  }
+
+  return normalized;
+}
+
 function rowToConn(row) {
   if (!row) return null;
   const extra = asObject(row.data);
@@ -139,9 +161,11 @@ export async function createProviderConnection(data) {
     }
 
     if (existing) {
-      const merged = { ...existing, ...data, updatedAt: now };
-      await upsertConn(tx, merged);
-      return merged;
+      const normalized = resetHealthStateOnActivation(existing, data);
+      const merged = { ...existing, ...normalized, updatedAt: now };
+      upsert(db, merged);
+      result = merged;
+      return;
     }
 
     let connectionName = data.name || null;
@@ -183,10 +207,11 @@ export async function updateProviderConnection(id, data) {
     const row = await tx.providerConnection.findUnique({ where: { id } });
     if (!row) return null;
     const existing = rowToConn(row);
-    const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
-    await upsertConn(tx, merged);
-    if (data.priority !== undefined) await reorderInTx(tx, existing.provider);
-    return merged;
+    const normalized = resetHealthStateOnActivation(existing, data);
+    const merged = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
+    upsert(db, merged);
+    if (data.priority !== undefined) reorderInTx(db, existing.provider);
+    result = merged;
   });
 }
 
