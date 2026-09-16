@@ -175,15 +175,38 @@ model RequestDetail {
 }
 
 model ChatSession {
-  id           String   @id
-  title        String   @default("New chat")
-  mode         String?
-  requestModel String?
-  modelLabel   String?
-  messages     Json
-  createdAt    DateTime
-  updatedAt    DateTime
+  id               String   @id
+  title            String   @default("New chat")
+  mode             String?
+  requestModel     String?
+  modelLabel       String?
+  messages         Json
+  ownerUserId      String?
+  sharedFromUserId String?
+  sharedFromEmail  String?
+  sharedFromName   String?
+  sharedNote       String?
+  createdAt        DateTime
+  updatedAt        DateTime
 
   @@index([updatedAt(sort: Desc)])
+  @@index([ownerUserId])
   @@map("chatSessions")
+}
+
+model ChatShare {
+  id              String    @id
+  fromUserId      String
+  toUserId        String
+  sourceSessionId String
+  targetSessionId String
+  messageId       String
+  note            String?
+  createdAt       DateTime
+  readAt          DateTime?
+
+  @@index([toUserId, createdAt(sort: Desc)])
+  @@index([fromUserId])
+  @@index([targetSessionId])
+  @@map("chatShares")
 }

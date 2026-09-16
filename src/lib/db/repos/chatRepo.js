@@ -2,6 +2,9 @@ import { v4 as uuidv4 } from "uuid";
 import { getPrisma } from "../client.js";
 import { asJson, toDate, toIso } from "../helpers/dates.js";
 
+const CONTEXT_LIMIT_DEFAULT = 20;
+const CONTEXT_LIMIT_MAX = 50;
+
 function normalizeMessages(messages) {
   if (!Array.isArray(messages)) return [];
   return messages.map((m) => ({
@@ -25,6 +28,11 @@ function rowToSession(row) {
     requestModel: row.requestModel || "",
     modelLabel: row.modelLabel || "",
     messages: normalizeMessages(asJson(row.messages, [])),
+    ownerUserId: row.ownerUserId || null,
+    sharedFromUserId: row.sharedFromUserId || null,
+    sharedFromEmail: row.sharedFromEmail || null,
+    sharedFromName: row.sharedFromName || null,
+    sharedNote: row.sharedNote || null,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };
@@ -37,14 +45,32 @@ function toWriteData(session) {
     requestModel: session.requestModel || null,
     modelLabel: session.modelLabel || null,
     messages: normalizeMessages(session.messages),
+    ownerUserId: session.ownerUserId || null,
+    sharedFromUserId: session.sharedFromUserId || null,
+    sharedFromEmail: session.sharedFromEmail || null,
+    sharedFromName: session.sharedFromName || null,
+    sharedNote: session.sharedNote || null,
     createdAt: toDate(session.createdAt || new Date().toISOString()),
     updatedAt: toDate(session.updatedAt || new Date().toISOString()),
   };
 }
 
-export async function getChatSessions() {
+/**
+ * @param {{ ownerUserId?: string|null }} [filter]
+ * When ownerUserId is set, returns sessions owned by that user plus legacy
+ * sessions with no owner (claimed on next write).
+ */
+export async function getChatSessions(filter = {}) {
   const prisma = await getPrisma();
+  const where = {};
+  if (filter.ownerUserId) {
+    where.OR = [
+      { ownerUserId: filter.ownerUserId },
+      { ownerUserId: null },
+    ];
+  }
   const rows = await prisma.chatSession.findMany({
+    where,
     orderBy: { updatedAt: "desc" },
   });
   return rows.map(rowToSession);
@@ -65,6 +91,11 @@ export async function createChatSession(data = {}) {
     requestModel: data.requestModel || "",
     modelLabel: data.modelLabel || "",
     messages: normalizeMessages(data.messages),
+    ownerUserId: data.ownerUserId || null,
+    sharedFromUserId: data.sharedFromUserId || null,
+    sharedFromEmail: data.sharedFromEmail || null,
+    sharedFromName: data.sharedFromName || null,
+    sharedNote: data.sharedNote || null,
     createdAt: data.createdAt || now,
     updatedAt: data.updatedAt || now,
   };
@@ -87,6 +118,11 @@ export async function updateChatSession(id, data = {}) {
     ...data,
     id: current.id,
     messages: data.messages !== undefined ? normalizeMessages(data.messages) : current.messages,
+    ownerUserId: data.ownerUserId !== undefined ? data.ownerUserId : current.ownerUserId,
+    sharedFromUserId: data.sharedFromUserId !== undefined ? data.sharedFromUserId : current.sharedFromUserId,
+    sharedFromEmail: data.sharedFromEmail !== undefined ? data.sharedFromEmail : current.sharedFromEmail,
+    sharedFromName: data.sharedFromName !== undefined ? data.sharedFromName : current.sharedFromName,
+    sharedNote: data.sharedNote !== undefined ? data.sharedNote : current.sharedNote,
     updatedAt: new Date().toISOString(),
   };
   await prisma.chatSession.update({
@@ -113,7 +149,7 @@ export async function deleteChatSession(id) {
   }
 }
 
-export async function importChatSessions(sessions = []) {
+export async function importChatSessions(sessions = [], { ownerUserId = null } = {}) {
   if (!Array.isArray(sessions) || sessions.length === 0) return [];
   const prisma = await getPrisma();
   const imported = [];
@@ -127,6 +163,11 @@ export async function importChatSessions(sessions = []) {
       requestModel: raw.requestModel || "",
       modelLabel: raw.modelLabel || "",
       messages: normalizeMessages(raw.messages),
+      ownerUserId: raw.ownerUserId || ownerUserId || null,
+      sharedFromUserId: raw.sharedFromUserId || null,
+      sharedFromEmail: raw.sharedFromEmail || null,
+      sharedFromName: raw.sharedFromName || null,
+      sharedNote: raw.sharedNote || null,
       createdAt: raw.createdAt || now,
       updatedAt: raw.updatedAt || now,
     };
@@ -139,3 +180,27 @@ export async function importChatSessions(sessions = []) {
   }
   return imported;
 }
+
+function clipTitle(text, max = 48) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (!clean) return "Shared chat";
+  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+/**
+ * Build message slice: up to `contextLimit` messages before the selected one, inclusive.
+ */
+export function buildShareContext(messages, messageId, contextLimit = CONTEXT_LIMIT_DEFAULT) {
+  const list = normalizeMessages(messages);
+  const idx = list.findIndex((m) => m.id === messageId);
+  if (idx < 0) return null;
+  const limit = Math.min(CONTEXT_LIMIT_MAX, Math.max(0, Number(contextLimit) || CONTEXT_LIMIT_DEFAULT));
+  const start = Math.max(0, idx - limit);
+  return list.slice(start, idx + 1).map((m) => ({
+    ...m,
+    id: uuidv4(),
+    status: m.role === "assistant" ? "done" : undefined,
+  }));
+}
+
+export { CONTEXT_LIMIT_DEFAULT, CONTEXT_LIMIT_MAX, clipTitle, normalizeMessages };

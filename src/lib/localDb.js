@@ -22,6 +22,7 @@ export {
   getChatSessions, getChatSessionById,
   createChatSession, updateChatSession, upsertChatSession,
   deleteChatSession, importChatSessions,
+  getChatSharesForUser, getChatShareById, markChatShareRead, shareChatMessage,
   getModelAliases, setModelAlias, deleteModelAlias,
   getCustomModels, addCustomModel, deleteCustomModel,
   getMitmAlias, setMitmAliasAll,

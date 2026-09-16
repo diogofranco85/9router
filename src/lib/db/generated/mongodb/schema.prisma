@@ -137,6 +137,8 @@ model UsageHistory {
   connectionId     String?
   apiKey           String?
   endpoint         String?
+  userId           String?
+  projectId        String?
   promptTokens     Int      @default(0)
   completionTokens Int      @default(0)
   cost             Float    @default(0)
@@ -148,6 +150,8 @@ model UsageHistory {
   @@index([provider])
   @@index([model])
   @@index([connectionId])
+  @@index([userId])
+  @@index([projectId])
   @@map("usageHistory")
 }
 
@@ -175,15 +179,38 @@ model RequestDetail {
 }
 
 model ChatSession {
-  id           String   @id @map("_id")
-  title        String   @default("New chat")
-  mode         String?
-  requestModel String?
-  modelLabel   String?
-  messages     Json
-  createdAt    DateTime
-  updatedAt    DateTime
+  id               String   @id @map("_id")
+  title            String   @default("New chat")
+  mode             String?
+  requestModel     String?
+  modelLabel       String?
+  messages         Json
+  ownerUserId      String?
+  sharedFromUserId String?
+  sharedFromEmail  String?
+  sharedFromName   String?
+  sharedNote       String?
+  createdAt        DateTime
+  updatedAt        DateTime
 
   @@index([updatedAt(sort: Desc)])
+  @@index([ownerUserId])
   @@map("chatSessions")
+}
+
+model ChatShare {
+  id              String    @id @map("_id")
+  fromUserId      String
+  toUserId        String
+  sourceSessionId String
+  targetSessionId String
+  messageId       String
+  note            String?
+  createdAt       DateTime
+  readAt          DateTime?
+
+  @@index([toUserId, createdAt(sort: Desc)])
+  @@index([fromUserId])
+  @@index([targetSessionId])
+  @@map("chatShares")
 }

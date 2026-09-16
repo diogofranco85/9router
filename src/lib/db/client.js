@@ -95,7 +95,8 @@ export async function getPrisma() {
   if (
     state.client &&
     (typeof state.client.user?.findMany !== "function" ||
-      typeof state.client.project?.findMany !== "function")
+      typeof state.client.project?.findMany !== "function" ||
+      typeof state.client.chatShare?.findMany !== "function")
   ) {
     const stale = state.client;
     state.client = null;

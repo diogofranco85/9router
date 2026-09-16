@@ -2,15 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Button,
-  ModelSelectModal,
-  SegmentedControl,
-  Select,
-} from "@/shared/components";
 import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
 import MarkdownMessage from "./MarkdownMessage";
+import ShareMessageModal from "./ShareMessageModal";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import {
   isAnthropicCompatibleProvider,
@@ -21,18 +16,10 @@ const STORAGE_KEYS = {
   sessions: "chat.sessions",
   activeSessionId: "chat.activeSessionId",
   draft: "chat.draft",
-  mode: "chat.mode",
-  autoModel: "chat.autoModel",
-  providerId: "chat.providerId",
-  providerModel: "chat.providerModel",
+  selectedModelId: "chat.selectedModelId",
   sidebarOpen: "chat.sidebarOpen",
   migrated: "chat.migratedToDb",
 };
-
-const MODE_OPTIONS = [
-  { value: "automatic", label: "Automatic", icon: "auto_awesome" },
-  { value: "provider", label: "Provider", icon: "dns" },
-];
 
 function createId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -100,17 +87,6 @@ function humanize(value = "") {
     .replace(/[-_]/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase())
     .trim() || "Unknown";
-}
-
-function formatRelativeTime(value) {
-  if (!value) return "Now";
-  const time = new Date(value).getTime();
-  if (Number.isNaN(time)) return "Now";
-  const diffMinutes = Math.max(1, Math.round((Date.now() - time) / 60000));
-  if (diffMinutes < 60) return `${diffMinutes}m`;
-  const diffHours = Math.round(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours}h`;
-  return `${Math.round(diffHours / 24)}d`;
 }
 
 function makeSessionTitle(text = "") {
@@ -214,17 +190,11 @@ function dedupeModels(models) {
 
 function ThinkingIndicator() {
   return (
-    <span className="flex items-center gap-2 py-0.5" role="status" aria-label="Waiting for response">
-      <span className="flex items-center gap-1">
-        {[0, 1, 2].map((index) => (
-          <span
-            key={index}
-            className="size-1.5 rounded-full bg-brand-500 animate-thinking-dot"
-            style={{ animationDelay: `${index * 0.16}s` }}
-          />
-        ))}
+    <span className="flex items-center gap-2 py-1" role="status" aria-label="Waiting for response">
+      <span className="material-symbols-outlined animate-spin text-[20px] text-[var(--chat-accent)]">
+        progress_activity
       </span>
-      <span className="text-xs text-text-muted">Thinking…</span>
+      <span className="text-[13px] text-[var(--chat-muted)]">Pensando…</span>
     </span>
   );
 }
@@ -239,7 +209,7 @@ function emptySession(overrides = {}) {
     messages: [],
     requestModel: "",
     modelLabel: "",
-    mode: "automatic",
+    mode: "provider",
     ...overrides,
   };
 }
@@ -247,7 +217,6 @@ function emptySession(overrides = {}) {
 export default function ChatPageClient() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [mode, setMode] = useState("automatic");
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState("");
   const [draft, setDraft] = useState("");
@@ -259,17 +228,18 @@ export default function ChatPageClient() {
   const [loadingData, setLoadingData] = useState(true);
 
   const [connections, setConnections] = useState([]);
-  const [modelAliases, setModelAliases] = useState({});
   const [providerGroups, setProviderGroups] = useState([]);
-  const [autoModel, setAutoModel] = useState(null);
-  const [modelModalOpen, setModelModalOpen] = useState(false);
-  const [selectedProviderId, setSelectedProviderId] = useState("");
-  const [selectedProviderModelId, setSelectedProviderModelId] = useState("");
+  const [selectedModelId, setSelectedModelId] = useState("");
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [shareTarget, setShareTarget] = useState(null);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [unreadShareCount, setUnreadShareCount] = useState(0);
 
   const fileInputRef = useRef(null);
   const abortRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const modelMenuRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -277,10 +247,7 @@ export default function ChatPageClient() {
     async function hydrate() {
       try {
         setDraft(globalThis.localStorage.getItem(STORAGE_KEYS.draft) || "");
-        setMode(globalThis.localStorage.getItem(STORAGE_KEYS.mode) || "automatic");
-        setAutoModel(safeParse(globalThis.localStorage.getItem(STORAGE_KEYS.autoModel), null));
-        setSelectedProviderId(globalThis.localStorage.getItem(STORAGE_KEYS.providerId) || "");
-        setSelectedProviderModelId(globalThis.localStorage.getItem(STORAGE_KEYS.providerModel) || "");
+        setSelectedModelId(globalThis.localStorage.getItem(STORAGE_KEYS.selectedModelId) || "");
         const savedSidebar = globalThis.localStorage.getItem(STORAGE_KEYS.sidebarOpen);
         if (savedSidebar != null) setSidebarOpen(savedSidebar !== "false");
         setActiveSessionId(globalThis.localStorage.getItem(STORAGE_KEYS.activeSessionId) || "");
@@ -334,9 +301,19 @@ export default function ChatPageClient() {
           ...s,
           messages: Array.isArray(s.messages) ? s.messages : [],
         })));
+        if (data.userId) setCurrentUserId(data.userId);
         const preferred = globalThis.localStorage.getItem(STORAGE_KEYS.activeSessionId) || "";
         const active = sessionsList.find((s) => s.id === preferred) || sessionsList[0];
         setActiveSessionId(active?.id || "");
+
+        if (data.userId) {
+          try {
+            const shareData = await apiJson("/api/chat/share?unread=1");
+            if (!cancelled) setUnreadShareCount(Array.isArray(shareData.shares) ? shareData.shares.length : 0);
+          } catch {
+            // ignore
+          }
+        }
       } catch (error) {
         if (!cancelled) {
           setLoadError(textValue(error?.message) || "Failed to load chat history.");
@@ -360,12 +337,8 @@ export default function ChatPageClient() {
       setLoadingData(true);
       setLoadError("");
       try {
-        const [providersRes, aliasRes] = await Promise.all([
-          fetch("/api/providers", { cache: "no-store" }),
-          fetch("/api/models/alias", { cache: "no-store" }),
-        ]);
+        const providersRes = await fetch("/api/providers", { cache: "no-store" });
         const providersData = await providersRes.json().catch(() => ({}));
-        const aliasData = await aliasRes.json().catch(() => ({}));
 
         const active = Array.isArray(providersData.connections)
           ? providersData.connections.filter((c) => c?.isActive !== false)
@@ -373,7 +346,6 @@ export default function ChatPageClient() {
 
         if (cancelled) return;
         setConnections(active);
-        setModelAliases(aliasData?.aliases && typeof aliasData.aliases === "object" ? aliasData.aliases : {});
 
         if (active.length === 0) {
           setProviderGroups([]);
@@ -453,62 +425,62 @@ export default function ChatPageClient() {
     try {
       globalThis.localStorage.setItem(STORAGE_KEYS.activeSessionId, activeSessionId);
       globalThis.localStorage.setItem(STORAGE_KEYS.draft, draft);
-      globalThis.localStorage.setItem(STORAGE_KEYS.mode, mode);
-      globalThis.localStorage.setItem(STORAGE_KEYS.autoModel, JSON.stringify(autoModel));
-      globalThis.localStorage.setItem(STORAGE_KEYS.providerId, selectedProviderId);
-      globalThis.localStorage.setItem(STORAGE_KEYS.providerModel, selectedProviderModelId);
       globalThis.localStorage.setItem(STORAGE_KEYS.sidebarOpen, String(sidebarOpen));
     } catch {
       // ignore
     }
-  }, [
-    isHydrated, activeSessionId, draft, mode, autoModel,
-    selectedProviderId, selectedProviderModelId, sidebarOpen,
-  ]);
+  }, [isHydrated, activeSessionId, draft, sidebarOpen]);
 
-  const activeProviderGroup = useMemo(
-    () => providerGroups.find((g) => g.providerId === selectedProviderId) || providerGroups[0] || null,
-    [providerGroups, selectedProviderId],
+  const allModels = useMemo(
+    () => providerGroups.flatMap((group) =>
+      group.models.map((model) => ({
+        ...model,
+        providerName: group.providerName,
+        value: model.id,
+        label: `${group.providerName} · ${model.name}`,
+      })),
+    ),
+    [providerGroups],
   );
 
-  const providerModelOptions = useMemo(() => {
-    if (!activeProviderGroup) return [];
-    return activeProviderGroup.models.map((m) => ({ value: m.id, label: m.name }));
-  }, [activeProviderGroup]);
-
-  const activeProviderModel = useMemo(() => {
-    if (!activeProviderGroup) return null;
-    return activeProviderGroup.models.find((m) => m.id === selectedProviderModelId)
-      || activeProviderGroup.models[0]
-      || null;
-  }, [activeProviderGroup, selectedProviderModelId]);
+  const selectedModel = useMemo(
+    () => allModels.find((m) => m.id === selectedModelId) || allModels[0] || null,
+    [allModels, selectedModelId],
+  );
 
   useEffect(() => {
-    if (!activeProviderGroup) return;
-    if (selectedProviderId !== activeProviderGroup.providerId) {
-      setSelectedProviderId(activeProviderGroup.providerId);
+    if (!isHydrated) return;
+    try {
+      globalThis.localStorage.setItem(
+        STORAGE_KEYS.selectedModelId,
+        selectedModel?.id || selectedModelId || "",
+      );
+    } catch {
+      // ignore
     }
-    if (!activeProviderGroup.models.some((m) => m.id === selectedProviderModelId)) {
-      setSelectedProviderModelId(activeProviderGroup.models[0]?.id || "");
-    }
-  }, [activeProviderGroup, selectedProviderId, selectedProviderModelId]);
+  }, [isHydrated, selectedModel?.id, selectedModelId]);
 
-  const requestModel = useMemo(() => {
-    if (mode === "automatic") return autoModel?.value || "";
-    return activeProviderModel?.requestModel || "";
-  }, [mode, autoModel, activeProviderModel]);
+  const requestModel = selectedModel?.requestModel || "";
+  const modelLabel = selectedModel?.name || "Selecionar modelo";
+  const modelProviderLabel = selectedModel?.providerName || "";
 
-  const modelLabel = useMemo(() => {
-    if (mode === "automatic") return autoModel?.name || autoModel?.value || "Select model";
-    return activeProviderModel?.name || "Select model";
-  }, [mode, autoModel, activeProviderModel]);
-
-  const modelSubLabel = useMemo(() => {
-    if (mode === "automatic") {
-      return autoModel?.value ? `Proxy · ${autoModel.value}` : "Combos, aliases & models via 9Router";
-    }
-    return activeProviderModel?.requestModel || "Pick a connected provider and agent";
-  }, [mode, autoModel, activeProviderModel]);
+  useEffect(() => {
+    if (!modelMenuOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (!modelMenuRef.current?.contains(event.target)) {
+        setModelMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setModelMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [modelMenuOpen]);
 
   useEffect(() => {
     // sessions are created during hydrate; keep active id in sync if list changes
@@ -533,6 +505,30 @@ export default function ChatPageClient() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [currentMessages, streamingText]);
+
+  // Mark inbound shares as read when opening the shared session
+  useEffect(() => {
+    if (!currentUserId || !currentSession?.sharedFromUserId || !currentSession?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiJson("/api/chat/share");
+        const shares = Array.isArray(data.shares) ? data.shares : [];
+        const unread = shares.filter(
+          (s) => s.targetSessionId === currentSession.id && !s.readAt,
+        );
+        for (const s of unread) {
+          await fetch(`/api/chat/share/${s.id}/read`, { method: "POST" });
+        }
+        if (!cancelled && unread.length > 0) {
+          setUnreadShareCount((n) => Math.max(0, n - unread.length));
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentUserId, currentSession?.id, currentSession?.sharedFromUserId]);
 
   const updateSession = useCallback((sessionId, updater) => {
     setSessions((prev) => prev.map((session) => (
@@ -559,7 +555,6 @@ export default function ChatPageClient() {
       const created = await apiJson("/api/chat/sessions", {
         method: "POST",
         body: JSON.stringify(emptySession({
-          mode,
           requestModel,
           modelLabel,
         })),
@@ -586,7 +581,7 @@ export default function ChatPageClient() {
       if (sessionId !== activeSessionId) return next;
 
       if (next.length === 0) {
-        const fresh = emptySession({ mode, requestModel, modelLabel });
+        const fresh = emptySession({ requestModel, modelLabel });
         apiJson("/api/chat/sessions", {
           method: "POST",
           body: JSON.stringify(fresh),
@@ -640,7 +635,7 @@ export default function ChatPageClient() {
       try {
         session = await apiJson("/api/chat/sessions", {
           method: "POST",
-          body: JSON.stringify(emptySession({ mode, requestModel, modelLabel })),
+          body: JSON.stringify(emptySession({ requestModel, modelLabel })),
         });
         sessionId = session.id;
         setSessions((prev) => [session, ...prev]);
@@ -675,7 +670,7 @@ export default function ChatPageClient() {
     const nextMessages = [...(session.messages || []), userMessage, assistantMessage];
     const pendingSession = {
       ...session,
-      mode,
+      mode: "provider",
       requestModel,
       modelLabel,
       messages: nextMessages,
@@ -819,124 +814,116 @@ export default function ChatPageClient() {
     }
   };
 
-  const providerSelectOptions = providerGroups.map((g) => ({
-    value: g.providerId,
-    label: g.providerName,
-  }));
+  const handleCopyMessage = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // ignore
+    }
+  };
+
+  const lastShareableMessage = useMemo(() => {
+    if (!currentUserId) return null;
+    for (let i = currentMessages.length - 1; i >= 0; i--) {
+      const m = currentMessages[i];
+      if (m?.id && textValue(m.content) && m.status !== "streaming") return m;
+    }
+    return null;
+  }, [currentMessages, currentUserId]);
 
   return (
-    <div className="flex h-full w-full bg-bg text-text-main">
-      {/* Sidebar — same chrome as dashboard */}
+    <div className="flex h-full w-full">
+      {/* Sidebar */}
       <aside
         className={cn(
-          "flex shrink-0 flex-col border-r border-border-subtle bg-vibrancy backdrop-blur-xl transition-all duration-200 min-h-full",
-          sidebarOpen ? "w-72" : "w-0 overflow-hidden border-r-0",
+          "flex shrink-0 flex-col transition-all duration-200 min-h-full",
+          "bg-[var(--chat-sidebar)]",
+          sidebarOpen ? "w-[280px]" : "w-0 overflow-hidden",
         )}
       >
-        {/* Traffic lights */}
-        <div className="flex items-center gap-2 px-6 pt-5 pb-2">
-          <div className="w-3 h-3 rounded-full bg-[#FF5F56]" />
-          <div className="w-3 h-3 rounded-full bg-[#FFBD2E]" />
-          <div className="w-3 h-3 rounded-full bg-[#27C93F]" />
-        </div>
-
-        {/* Logo */}
-        <div className="px-6 py-4 flex flex-col gap-2">
-          <Link href="/chat" className="flex items-center gap-3">
-            <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)]">
-              <span className="material-symbols-outlined text-white text-[20px]">hub</span>
-            </div>
-            <div className="flex flex-col">
-              <h1 className="text-lg font-semibold tracking-tight text-text-main">
-                {APP_CONFIG.name}
-              </h1>
-              <span className="text-xs text-text-muted">v{APP_CONFIG.version}</span>
-            </div>
+        <div className="flex items-center justify-between px-4 pt-5 pb-3">
+          <Link href="/chat" className="text-[17px] font-semibold tracking-tight text-[var(--chat-text)]">
+            {APP_CONFIG.name}
           </Link>
-        </div>
-
-        <div className="px-4 pb-2">
           <button
             type="button"
-            onClick={createNewChat}
-            className="flex w-full items-center gap-3 rounded-lg bg-primary/10 px-3 py-2 text-primary transition-all hover:bg-primary/15"
+            className="rounded-lg p-1.5 text-[var(--chat-muted)] hover:bg-[var(--chat-sidebar-hover)] hover:text-[var(--chat-text)] lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close sidebar"
           >
-            <span className="material-symbols-outlined text-[18px] fill-1">add_comment</span>
-            <span className="text-[13px] font-medium">New chat</span>
+            <span className="material-symbols-outlined text-[20px]">close</span>
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto custom-scrollbar px-4 py-1 space-y-0.5">
-          <p className="px-3 mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted/60">
-            Chats
+        <div className="px-3 pb-3 space-y-0.5">
+          <button
+            type="button"
+            onClick={createNewChat}
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13.5px] font-medium text-[var(--chat-text)] transition-colors hover:bg-[var(--chat-sidebar-hover)]"
+          >
+            <span className="material-symbols-outlined text-[18px]">add</span>
+            New Chat
+          </button>
+          <Link
+            href="/account"
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13.5px] font-medium text-[var(--chat-muted)] transition-colors hover:bg-[var(--chat-sidebar-hover)] hover:text-[var(--chat-text)]"
+          >
+            <span className="material-symbols-outlined text-[18px]">tune</span>
+            Conta
+          </Link>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto custom-scrollbar px-2 pb-2">
+          <p className="px-3 mb-1.5 mt-2 text-[11px] font-medium text-[var(--chat-muted)]">
+            Conversas
+            {unreadShareCount > 0 ? ` · ${unreadShareCount} novo(s)` : ""}
           </p>
           {sessionItems.map((session) => {
             const active = session.id === activeSessionId;
+            const isShared = !!session.sharedFromUserId;
             return (
               <div
                 key={session.id}
                 className={cn(
-                  "group flex items-center gap-1 rounded-lg px-2 py-1.5 transition-all",
+                  "group relative flex items-center gap-1 rounded-xl mx-1 mb-0.5 transition-colors",
                   active
-                    ? "bg-primary/10 text-primary"
-                    : "text-text-muted hover:bg-surface-2 hover:text-text-main",
+                    ? "bg-[var(--chat-active)] text-[var(--chat-text)]"
+                    : "text-[var(--chat-muted)] hover:bg-[var(--chat-sidebar-hover)] hover:text-[var(--chat-text)]",
                 )}
               >
+                {active && (
+                  <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-[var(--chat-accent)]" />
+                )}
                 <button
                   type="button"
-                  className="min-w-0 flex-1 text-left"
+                  className="min-w-0 flex-1 px-3 py-2 text-left"
                   onClick={() => setActiveSessionId(session.id)}
                 >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "material-symbols-outlined shrink-0 text-[18px]",
-                        active ? "fill-1" : "group-hover:text-primary transition-colors",
-                      )}
-                    >
-                      chat_bubble
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-medium">
-                        {session.title || "New chat"}
-                      </span>
-                      <span className={cn("block truncate text-[11px]", active ? "text-primary/70" : "opacity-70")}>
-                        {formatRelativeTime(session.updatedAt)}
-                        {session.modelLabel ? ` · ${session.modelLabel}` : ""}
-                      </span>
-                    </span>
-                  </div>
+                  <span className="block truncate text-[13.5px] font-medium leading-snug">
+                    {isShared ? "↗ " : ""}
+                    {session.title || "New chat"}
+                  </span>
                 </button>
                 <button
                   type="button"
-                  className="invisible rounded-md p-1 text-text-muted hover:bg-bg hover:text-red-500 group-hover:visible"
+                  className="mr-1 invisible rounded-md p-1 text-[var(--chat-muted)] hover:text-red-500 group-hover:visible"
                   onClick={() => deleteSession(session.id)}
                   aria-label="Delete chat"
                 >
-                  <span className="material-symbols-outlined text-[16px]">delete</span>
+                  <span className="material-symbols-outlined text-[15px]">close</span>
                 </button>
               </div>
             );
           })}
         </nav>
 
-        <div className="mt-auto border-t border-border-subtle px-4 py-3 space-y-0.5">
-          <p className="px-3 mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted/60">
-            System
-          </p>
-          <Link
-            href="/account"
-            className="flex items-center gap-3 rounded-lg px-3 py-1 text-text-muted transition-all hover:bg-surface-2 hover:text-text-main group"
-          >
-            <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">person</span>
-            <span className="text-[13px] font-medium">Account</span>
-          </Link>
+        <div className="mt-auto border-t border-[var(--chat-border)] px-3 py-3 space-y-0.5">
           <Link
             href="/dashboard"
-            className="flex items-center gap-3 rounded-lg px-3 py-1 text-text-muted transition-all hover:bg-surface-2 hover:text-text-main group"
+            className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] text-[var(--chat-muted)] hover:bg-[var(--chat-sidebar-hover)] hover:text-[var(--chat-text)]"
           >
-            <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">dashboard</span>
-            <span className="text-[13px] font-medium">Dashboard</span>
+            <span className="material-symbols-outlined text-[18px]">dashboard</span>
+            Dashboard
           </Link>
           <button
             type="button"
@@ -948,76 +935,55 @@ export default function ChatPageClient() {
                 window.location.assign("/login");
               }
             }}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-1 text-left text-text-muted transition-all hover:bg-red-500/10 hover:text-red-500 group"
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] text-[var(--chat-muted)] hover:bg-red-500/10 hover:text-red-500"
           >
-            <span className="material-symbols-outlined text-[18px] group-hover:text-red-500 transition-colors">logout</span>
-            <span className="text-[13px] font-medium">Logout</span>
+            <span className="material-symbols-outlined text-[18px]">logout</span>
+            Sair
           </button>
         </div>
       </aside>
 
       {/* Main */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center gap-3 border-b border-border-subtle bg-surface/60 backdrop-blur-xl px-3 py-2.5 sm:px-4">
+      <div className="relative flex min-w-0 flex-1 flex-col bg-[var(--chat-bg)]">
+        <header className="flex shrink-0 items-center gap-3 px-3 py-3 sm:px-5">
           <button
             type="button"
-            className="rounded-[10px] p-2 text-text-muted hover:bg-surface-2 hover:text-text-main"
+            className="rounded-lg p-2 text-[var(--chat-muted)] hover:bg-[var(--chat-sidebar)] hover:text-[var(--chat-text)]"
             onClick={() => setSidebarOpen((v) => !v)}
             aria-label="Toggle sidebar"
           >
-            <span className="material-symbols-outlined text-[20px]">
-              {sidebarOpen ? "left_panel_close" : "left_panel_open"}
+            <span className="material-symbols-outlined text-[22px]">
+              {sidebarOpen ? "left_panel_close" : "menu"}
             </span>
           </button>
 
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <SegmentedControl
-              size="sm"
-              options={MODE_OPTIONS}
-              value={mode}
-              onChange={setMode}
-            />
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-[15px] font-medium tracking-tight text-[var(--chat-text)]">
+              {currentSession?.title || "Nova conversa"}
+            </h2>
+          </div>
 
-            {mode === "automatic" ? (
+          <div className="flex shrink-0 items-center gap-2">
+            {currentUserId && (
               <button
                 type="button"
-                onClick={() => setModelModalOpen(true)}
-                className="flex min-w-0 max-w-full items-center gap-2 rounded-[10px] border border-border bg-surface-2 px-3 py-1.5 text-left transition hover:border-brand-500/40"
+                disabled={!lastShareableMessage}
+                onClick={() => lastShareableMessage && setShareTarget(lastShareableMessage)}
+                className={cn(
+                  "rounded-full border border-[var(--chat-border)] px-3.5 py-1.5 text-[13px] font-medium transition-colors",
+                  lastShareableMessage
+                    ? "text-[var(--chat-text)] hover:bg-[var(--chat-sidebar)]"
+                    : "cursor-not-allowed text-[var(--chat-muted)] opacity-50",
+                )}
               >
-                <span className="material-symbols-outlined text-[18px] text-brand-500">smart_toy</span>
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">{modelLabel}</span>
-                  <span className="block truncate text-xs text-text-muted">{modelSubLabel}</span>
-                </span>
-                <span className="material-symbols-outlined text-[18px] text-text-muted">expand_more</span>
+                Compartilhar
               </button>
-            ) : (
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <Select
-                  className="min-w-[140px]"
-                  selectClassName="py-1.5"
-                  value={activeProviderGroup?.providerId || ""}
-                  onChange={(e) => setSelectedProviderId(e.target.value)}
-                  options={providerSelectOptions}
-                  placeholder={loadingData ? "Loading…" : "Provider"}
-                  disabled={loadingData || providerSelectOptions.length === 0}
-                />
-                <Select
-                  className="min-w-[160px]"
-                  selectClassName="py-1.5"
-                  value={activeProviderModel?.id || ""}
-                  onChange={(e) => setSelectedProviderModelId(e.target.value)}
-                  options={providerModelOptions}
-                  placeholder="Agent / model"
-                  disabled={!activeProviderGroup || providerModelOptions.length === 0}
-                />
-              </div>
             )}
           </div>
         </header>
 
         {(loadError || (!loadingData && connections.length === 0)) && (
-          <div className="border-b border-border bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+          <div className="mx-4 mb-2 rounded-xl bg-amber-500/10 px-4 py-2 text-sm text-amber-800 dark:text-amber-300 sm:mx-6">
             {loadError || "No active providers. Connect one in the dashboard to chat."}
             {!loadError && connections.length === 0 && (
               <Link href="/dashboard/providers" className="ml-2 underline">
@@ -1029,76 +995,134 @@ export default function ChatPageClient() {
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto">
+          {currentSession?.sharedFromUserId && (
+            <div className="mx-auto max-w-[720px] px-4 pt-2 text-[13px] text-[var(--chat-muted)] sm:px-6">
+              Compartilhado por{" "}
+              <span className="font-medium text-[var(--chat-text)]">
+                {currentSession.sharedFromName || currentSession.sharedFromEmail || "um usuário"}
+              </span>
+              {currentSession.sharedNote ? ` — ${currentSession.sharedNote}` : ""}. Você pode continuar.
+            </div>
+          )}
+
           {currentMessages.length === 0 ? (
-            <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-4 px-6 text-center">
-              <div className="flex size-14 items-center justify-center rounded-2xl bg-brand-500/10 text-brand-500">
-                <span className="material-symbols-outlined text-[32px]">forum</span>
-              </div>
-              <div>
-                <h1 className="text-2xl font-semibold tracking-tight">9Router Chat</h1>
-                <p className="mt-2 text-sm text-text-muted">
-                  {mode === "automatic"
-                    ? "Automatic mode routes through the 9Router proxy — pick a combo, alias, or model."
-                    : "Provider mode sends to a specific connected account and agent."}
-                </p>
-              </div>
-              {!requestModel && (
-                <Button
-                  variant="secondary"
-                  icon={mode === "automatic" ? "auto_awesome" : "dns"}
-                  onClick={() => {
-                    if (mode === "automatic") setModelModalOpen(true);
-                  }}
-                >
-                  {mode === "automatic" ? "Choose model" : "Select provider & agent above"}
-                </Button>
-              )}
+            <div className="mx-auto flex h-full max-w-[720px] flex-col items-center justify-center gap-3 px-6 pb-24 text-center">
+              <h1 className="text-3xl font-normal tracking-tight text-[var(--chat-text)]" style={{ fontFamily: "var(--font-serif)" }}>
+                Como posso ajudar?
+              </h1>
+              <p className="max-w-md text-[14px] text-[var(--chat-muted)]">
+                {requestModel
+                  ? "Escreva sua mensagem para começar."
+                  : "Selecione um modelo abaixo para começar."}
+              </p>
             </div>
           ) : (
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6 sm:px-6">
+            <div className="mx-auto flex w-full max-w-[720px] flex-col gap-8 px-4 pb-36 pt-4 sm:px-6">
               {currentMessages.map((message) => {
                 const isUser = message.role === "user";
                 const isStreaming = !isUser && message.id === streamingMessageId && message.status === "streaming";
                 const content = textValue(message.content) || (isStreaming ? streamingText : "");
+                const canShareMsg = !!currentUserId && !isStreaming && !!content;
+
+                if (isUser) {
+                  return (
+                    <div key={message.id} className="group/msg flex w-full justify-end">
+                      <div className="relative max-w-[85%]">
+                        {Array.isArray(message.attachments) && message.attachments.length > 0 && (
+                          <div className="mb-2 flex flex-wrap justify-end gap-2">
+                            {message.attachments.map((att) => (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                key={att.id}
+                                src={att.dataUrl}
+                                alt={att.name || "attachment"}
+                                className="max-h-40 rounded-2xl border border-[var(--chat-border)]"
+                              />
+                            ))}
+                          </div>
+                        )}
+                        <div className="rounded-[22px] bg-[var(--chat-user-bubble)] px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-[var(--chat-text)]">
+                          {content}
+                        </div>
+                        {canShareMsg && (
+                          <div className="mt-1.5 flex justify-end gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100">
+                            <button
+                              type="button"
+                              title="Copiar"
+                              className="rounded-lg p-1.5 text-[var(--chat-muted)] hover:bg-[var(--chat-sidebar)] hover:text-[var(--chat-text)]"
+                              onClick={() => handleCopyMessage(content)}
+                            >
+                              <span className="material-symbols-outlined text-[16px]">content_copy</span>
+                            </button>
+                            <button
+                              type="button"
+                              title="Compartilhar"
+                              className="rounded-lg p-1.5 text-[var(--chat-muted)] hover:bg-[var(--chat-sidebar)] hover:text-[var(--chat-text)]"
+                              onClick={() => setShareTarget(message)}
+                            >
+                              <span className="material-symbols-outlined text-[16px]">ios_share</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
-                  <div
-                    key={message.id}
-                    className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
-                  >
+                  <div key={message.id} className="group/msg w-full">
                     <div
                       className={cn(
-                        "max-w-[90%] rounded-2xl px-4 py-3 text-sm leading-relaxed break-words",
-                        isUser
-                          ? "bg-brand-500 text-white whitespace-pre-wrap"
-                          : message.status === "error"
-                            ? "bg-red-500/10 text-red-600 dark:text-red-300 border border-red-500/20"
-                            : "bg-surface border border-border text-text-main",
+                        "max-w-none text-[var(--chat-text)]",
+                        message.status === "error" && "text-red-600 dark:text-red-300",
                       )}
                     >
-                      {!isUser && (
-                        <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-text-muted">
-                          Assistant
-                        </div>
-                      )}
                       {Array.isArray(message.attachments) && message.attachments.length > 0 && (
-                        <div className="mb-2 flex flex-wrap gap-2">
+                        <div className="mb-3 flex flex-wrap gap-2">
                           {message.attachments.map((att) => (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
                               key={att.id}
                               src={att.dataUrl}
                               alt={att.name || "attachment"}
-                              className="max-h-40 rounded-lg border border-black/10"
+                              className="max-h-40 rounded-2xl border border-[var(--chat-border)]"
                             />
                           ))}
                         </div>
                       )}
-                      {isUser ? content : <MarkdownMessage content={content} />}
+                      {content ? <MarkdownMessage content={content} /> : null}
                       {!content && isStreaming ? <ThinkingIndicator /> : null}
                       {isStreaming && content ? (
-                        <span className="ml-0.5 inline-block animate-pulse">▋</span>
+                        <span className="ml-0.5 inline-block animate-pulse text-[var(--chat-accent)]">▍</span>
                       ) : null}
                     </div>
+                    {!isStreaming && content && (
+                      <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100">
+                        <button
+                          type="button"
+                          title="Copiar"
+                          className="rounded-lg p-1.5 text-[var(--chat-muted)] hover:bg-[var(--chat-sidebar)] hover:text-[var(--chat-text)]"
+                          onClick={() => handleCopyMessage(content)}
+                        >
+                          <span className="material-symbols-outlined text-[17px]">content_copy</span>
+                        </button>
+                        {canShareMsg && (
+                          <button
+                            type="button"
+                            title="Compartilhar"
+                            className="rounded-lg p-1.5 text-[var(--chat-muted)] hover:bg-[var(--chat-sidebar)] hover:text-[var(--chat-text)]"
+                            onClick={() => setShareTarget(message)}
+                          >
+                            <span className="material-symbols-outlined text-[17px]">ios_share</span>
+                          </button>
+                        )}
+                        {isSending && message.id === streamingMessageId ? null : (
+                          <span className="material-symbols-outlined ml-1 text-[14px] text-[var(--chat-accent)] opacity-80">
+                            auto_awesome
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1107,22 +1131,22 @@ export default function ChatPageClient() {
           )}
         </div>
 
-        {/* Composer */}
-        <div className="shrink-0 border-t border-border bg-surface px-3 py-3 sm:px-6">
-          <div className="mx-auto w-full max-w-3xl">
+        {/* Floating composer */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-[var(--chat-bg)] via-[var(--chat-bg)] to-transparent pt-10 pb-4 sm:pb-5">
+          <div className="pointer-events-auto mx-auto w-full max-w-[720px] px-3 sm:px-6">
             {attachments.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-2">
+              <div className="mb-2 flex flex-wrap gap-2 px-2">
                 {attachments.map((att) => (
                   <div key={att.id} className="relative">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={att.dataUrl}
                       alt={att.name}
-                      className="h-16 w-16 rounded-lg object-cover border border-border"
+                      className="h-14 w-14 rounded-xl object-cover border border-[var(--chat-border)]"
                     />
                     <button
                       type="button"
-                      className="absolute -right-1.5 -top-1.5 rounded-full bg-surface border border-border p-0.5"
+                      className="absolute -right-1.5 -top-1.5 rounded-full bg-[var(--chat-bg)] border border-[var(--chat-border)] p-0.5"
                       onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
                     >
                       <span className="material-symbols-outlined text-[14px]">close</span>
@@ -1131,7 +1155,7 @@ export default function ChatPageClient() {
                 ))}
               </div>
             )}
-            <div className="flex items-end gap-2 rounded-2xl border border-border bg-surface-2 p-2 focus-within:border-brand-500/40 focus-within:ring-2 focus-within:ring-brand-500/20">
+            <div className="flex items-end gap-1 rounded-full border border-[var(--chat-border)] bg-[var(--chat-bg)] px-2 py-1.5 shadow-[0_2px_16px_-4px_rgba(0,0,0,0.08)] focus-within:border-[var(--chat-accent)]/40 focus-within:shadow-[0_2px_20px_-4px_rgba(201,100,66,0.18)]">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1142,11 +1166,11 @@ export default function ChatPageClient() {
               />
               <button
                 type="button"
-                className="rounded-[10px] p-2 text-text-muted hover:bg-surface hover:text-text-main"
+                className="mb-0.5 rounded-full p-2.5 text-[var(--chat-muted)] hover:bg-[var(--chat-sidebar)] hover:text-[var(--chat-text)]"
                 onClick={() => fileInputRef.current?.click()}
-                aria-label="Attach image"
+                aria-label="Anexar imagem"
               >
-                <span className="material-symbols-outlined text-[20px]">image</span>
+                <span className="material-symbols-outlined text-[22px]">add</span>
               </button>
               <textarea
                 ref={textareaRef}
@@ -1154,45 +1178,123 @@ export default function ChatPageClient() {
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={handleKeyDown}
                 rows={1}
-                placeholder={requestModel ? "Message 9Router…" : "Select a model first…"}
-                className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent py-2 text-[16px] text-text-main outline-none placeholder:text-text-muted sm:text-sm"
+                placeholder={requestModel ? "Escreva uma mensagem..." : "Selecione um modelo primeiro…"}
+                className="max-h-36 min-h-[44px] flex-1 resize-none bg-transparent py-2.5 text-[15px] text-[var(--chat-text)] outline-none placeholder:text-[var(--chat-muted)]"
               />
               {isSending ? (
-                <Button variant="secondary" icon="stop" onClick={handleStop}>
-                  Stop
-                </Button>
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className="mb-0.5 rounded-full bg-[var(--chat-text)] p-2.5 text-[var(--chat-bg)] hover:opacity-90"
+                  aria-label="Parar"
+                >
+                  <span className="material-symbols-outlined text-[20px]">stop</span>
+                </button>
               ) : (
-                <Button
-                  variant="primary"
-                  icon="send"
+                <button
+                  type="button"
                   disabled={!canSend}
                   onClick={sendMessage}
+                  className={cn(
+                    "mb-0.5 rounded-full p-2.5 transition-colors",
+                    canSend
+                      ? "bg-[var(--chat-accent)] text-white hover:brightness-110"
+                      : "bg-[var(--chat-sidebar)] text-[var(--chat-muted)]",
+                  )}
+                  aria-label="Enviar"
                 >
-                  Send
-                </Button>
+                  <span className="material-symbols-outlined text-[20px]">arrow_upward</span>
+                </button>
               )}
             </div>
-            <p className="mt-2 text-center text-[11px] text-text-muted">
-              Routed via 9Router · {mode === "automatic" ? "proxy / combo" : "direct provider"}
-              {requestModel ? ` · ${requestModel}` : ""}
-            </p>
+            <div className="relative mt-2 flex items-center justify-between gap-3 px-1" ref={modelMenuRef}>
+              <button
+                type="button"
+                disabled={loadingData || allModels.length === 0}
+                onClick={() => setModelMenuOpen((open) => !open)}
+                className={cn(
+                  "inline-flex max-w-[70%] items-center gap-1 rounded-lg px-2 py-1 text-[13px] transition-colors",
+                  "text-[var(--chat-muted)] hover:bg-[var(--chat-sidebar)] hover:text-[var(--chat-text)]",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
+                )}
+                aria-haspopup="listbox"
+                aria-expanded={modelMenuOpen}
+              >
+                <span className="truncate font-medium">
+                  {loadingData ? "Carregando…" : modelLabel}
+                </span>
+                {modelProviderLabel ? (
+                  <span className="hidden truncate text-[12px] opacity-70 sm:inline">
+                    · {modelProviderLabel}
+                  </span>
+                ) : null}
+                <span className="material-symbols-outlined text-[18px] opacity-70">
+                  {modelMenuOpen ? "expand_less" : "expand_more"}
+                </span>
+              </button>
+
+              {modelMenuOpen && (
+                <div
+                  role="listbox"
+                  className="absolute bottom-full left-0 z-30 mb-2 max-h-72 w-[min(100%,320px)] overflow-y-auto rounded-2xl border border-[var(--chat-border)] bg-[var(--chat-bg)] py-1.5 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.25)]"
+                >
+                  {providerGroups.map((group) => (
+                    <div key={group.providerId} className="py-1">
+                      <div className="px-3 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-[var(--chat-muted)]">
+                        {group.providerName}
+                      </div>
+                      {group.models.map((model) => {
+                        const isActive = (selectedModel?.id || "") === model.id;
+                        return (
+                          <button
+                            key={model.id}
+                            type="button"
+                            role="option"
+                            aria-selected={isActive}
+                            onClick={() => {
+                              setSelectedModelId(model.id);
+                              setModelMenuOpen(false);
+                            }}
+                            className={cn(
+                              "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] transition-colors",
+                              isActive
+                                ? "bg-[var(--chat-sidebar)] text-[var(--chat-text)]"
+                                : "text-[var(--chat-text)] hover:bg-[var(--chat-sidebar)]",
+                            )}
+                          >
+                            <span className="truncate">{model.name}</span>
+                            {isActive ? (
+                              <span className="material-symbols-outlined text-[16px] text-[var(--chat-accent)]">
+                                check
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                  {providerGroups.length === 0 && (
+                    <div className="px-3 py-3 text-[13px] text-[var(--chat-muted)]">
+                      Nenhum modelo disponível.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <span className="truncate text-[11px] text-[var(--chat-muted)]">
+                9Router pode cometer erros.
+              </span>
+            </div>
           </div>
         </div>
       </div>
 
-      <ModelSelectModal
-        isOpen={modelModalOpen}
-        onClose={() => setModelModalOpen(false)}
-        onSelect={(model) => {
-          setAutoModel(model);
-          setModelModalOpen(false);
-        }}
-        selectedModel={autoModel?.value || ""}
-        activeProviders={connections}
-        modelAliases={modelAliases}
-        kindFilter="llm"
-        title="Select model (proxy)"
-        closeOnSelect
+      <ShareMessageModal
+        isOpen={!!shareTarget}
+        onClose={() => setShareTarget(null)}
+        message={shareTarget}
+        sessionId={activeSessionId}
+        onShared={() => setShareTarget(null)}
       />
     </div>
   );

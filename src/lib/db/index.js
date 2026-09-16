@@ -58,7 +58,13 @@ export {
   getChatSessions, getChatSessionById,
   createChatSession, updateChatSession, upsertChatSession,
   deleteChatSession, importChatSessions,
+  buildShareContext, clipTitle,
 } from "./repos/chatRepo.js";
+
+// Chat shares
+export {
+  getChatSharesForUser, getChatShareById, markChatShareRead, shareChatMessage,
+} from "./repos/chatShareRepo.js";
 
 // Aliases (model + custom + mitm)
 export {

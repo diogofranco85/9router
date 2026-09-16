@@ -609,6 +609,55 @@ button:disabled,
   margin: 1.5rem 0;
 }
 
+/* ============================================================
+   Chat — Claude-inspired shell (scoped to .chat-claude)
+   ============================================================ */
+.chat-claude {
+  --chat-bg: #ffffff;
+  --chat-sidebar: #f5f4f1;
+  --chat-sidebar-hover: #ebeae6;
+  --chat-active: #f0e6dc;
+  --chat-accent: #c96442;
+  --chat-text: #1f1e1d;
+  --chat-muted: #73726c;
+  --chat-border: #e8e6e0;
+  --chat-user-bubble: #f0efeb;
+  --font-sans: var(--font-chat-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-chat-serif), "Source Serif 4", Georgia, "Times New Roman", serif;
+  font-family: var(--font-sans);
+  color: var(--chat-text);
+  background: var(--chat-bg);
+}
+
+.dark .chat-claude {
+  --chat-bg: #1a1918;
+  --chat-sidebar: #141312;
+  --chat-sidebar-hover: #222120;
+  --chat-active: #2a221c;
+  --chat-accent: #e07a55;
+  --chat-text: #f5f4f1;
+  --chat-muted: #9a9890;
+  --chat-border: #2e2c29;
+  --chat-user-bubble: #2a2826;
+}
+
+.chat-claude .chat-markdown {
+  font-family: var(--font-serif);
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  color: var(--chat-text);
+}
+
+.chat-claude .chat-markdown p { margin: 0.65rem 0; line-height: 1.75; }
+.chat-claude .chat-markdown h1,
+.chat-claude .chat-markdown h2,
+.chat-claude .chat-markdown h3,
+.chat-claude .chat-markdown h4 {
+  font-family: var(--font-sans);
+  font-weight: 580;
+  letter-spacing: -0.01em;
+}
+
 /* Chat assistant markdown */
 .chat-markdown > :first-child { margin-top: 0; }
 .chat-markdown > :last-child { margin-bottom: 0; }

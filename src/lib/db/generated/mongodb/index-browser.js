@@ -212,6 +212,8 @@ exports.Prisma.UsageHistoryScalarFieldEnum = {
   connectionId: 'connectionId',
   apiKey: 'apiKey',
   endpoint: 'endpoint',
+  userId: 'userId',
+  projectId: 'projectId',
   promptTokens: 'promptTokens',
   completionTokens: 'completionTokens',
   cost: 'cost',
@@ -242,8 +244,25 @@ exports.Prisma.ChatSessionScalarFieldEnum = {
   requestModel: 'requestModel',
   modelLabel: 'modelLabel',
   messages: 'messages',
+  ownerUserId: 'ownerUserId',
+  sharedFromUserId: 'sharedFromUserId',
+  sharedFromEmail: 'sharedFromEmail',
+  sharedFromName: 'sharedFromName',
+  sharedNote: 'sharedNote',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
+};
+
+exports.Prisma.ChatShareScalarFieldEnum = {
+  id: 'id',
+  fromUserId: 'fromUserId',
+  toUserId: 'toUserId',
+  sourceSessionId: 'sourceSessionId',
+  targetSessionId: 'targetSessionId',
+  messageId: 'messageId',
+  note: 'note',
+  createdAt: 'createdAt',
+  readAt: 'readAt'
 };
 
 exports.Prisma.SortOrder = {
@@ -271,7 +290,8 @@ exports.Prisma.ModelName = {
   UsageHistory: 'UsageHistory',
   UsageDaily: 'UsageDaily',
   RequestDetail: 'RequestDetail',
-  ChatSession: 'ChatSession'
+  ChatSession: 'ChatSession',
+  ChatShare: 'ChatShare'
 };
 
 /**
