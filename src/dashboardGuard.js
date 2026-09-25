@@ -293,6 +293,8 @@ async function enforceAccessPolicies(request, pathname) {
 
   return null;
 }
+// Shared with src/proxy.js — the mimo login branch must respect dashboard auth.
+export { isAuthenticated };
 
 export const __test__ = {
   isLocalRequest,
