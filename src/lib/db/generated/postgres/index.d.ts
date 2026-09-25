@@ -12280,6 +12280,8 @@ export namespace Prisma {
     connectionId: string | null
     apiKey: string | null
     endpoint: string | null
+    userId: string | null
+    projectId: string | null
     promptTokens: number | null
     completionTokens: number | null
     cost: number | null
@@ -12294,6 +12296,8 @@ export namespace Prisma {
     connectionId: string | null
     apiKey: string | null
     endpoint: string | null
+    userId: string | null
+    projectId: string | null
     promptTokens: number | null
     completionTokens: number | null
     cost: number | null
@@ -12308,6 +12312,8 @@ export namespace Prisma {
     connectionId: number
     apiKey: number
     endpoint: number
+    userId: number
+    projectId: number
     promptTokens: number
     completionTokens: number
     cost: number
@@ -12340,6 +12346,8 @@ export namespace Prisma {
     connectionId?: true
     apiKey?: true
     endpoint?: true
+    userId?: true
+    projectId?: true
     promptTokens?: true
     completionTokens?: true
     cost?: true
@@ -12354,6 +12362,8 @@ export namespace Prisma {
     connectionId?: true
     apiKey?: true
     endpoint?: true
+    userId?: true
+    projectId?: true
     promptTokens?: true
     completionTokens?: true
     cost?: true
@@ -12368,6 +12378,8 @@ export namespace Prisma {
     connectionId?: true
     apiKey?: true
     endpoint?: true
+    userId?: true
+    projectId?: true
     promptTokens?: true
     completionTokens?: true
     cost?: true
@@ -12471,6 +12483,8 @@ export namespace Prisma {
     connectionId: string | null
     apiKey: string | null
     endpoint: string | null
+    userId: string | null
+    projectId: string | null
     promptTokens: number
     completionTokens: number
     cost: number
@@ -12506,6 +12520,8 @@ export namespace Prisma {
     connectionId?: boolean
     apiKey?: boolean
     endpoint?: boolean
+    userId?: boolean
+    projectId?: boolean
     promptTokens?: boolean
     completionTokens?: boolean
     cost?: boolean
@@ -12522,6 +12538,8 @@ export namespace Prisma {
     connectionId?: boolean
     apiKey?: boolean
     endpoint?: boolean
+    userId?: boolean
+    projectId?: boolean
     promptTokens?: boolean
     completionTokens?: boolean
     cost?: boolean
@@ -12538,6 +12556,8 @@ export namespace Prisma {
     connectionId?: boolean
     apiKey?: boolean
     endpoint?: boolean
+    userId?: boolean
+    projectId?: boolean
     promptTokens?: boolean
     completionTokens?: boolean
     cost?: boolean
@@ -12554,6 +12574,8 @@ export namespace Prisma {
     connectionId?: boolean
     apiKey?: boolean
     endpoint?: boolean
+    userId?: boolean
+    projectId?: boolean
     promptTokens?: boolean
     completionTokens?: boolean
     cost?: boolean
@@ -12562,7 +12584,7 @@ export namespace Prisma {
     meta?: boolean
   }
 
-  export type UsageHistoryOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "timestamp" | "provider" | "model" | "connectionId" | "apiKey" | "endpoint" | "promptTokens" | "completionTokens" | "cost" | "status" | "tokens" | "meta", ExtArgs["result"]["usageHistory"]>
+  export type UsageHistoryOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "timestamp" | "provider" | "model" | "connectionId" | "apiKey" | "endpoint" | "userId" | "projectId" | "promptTokens" | "completionTokens" | "cost" | "status" | "tokens" | "meta", ExtArgs["result"]["usageHistory"]>
 
   export type $UsageHistoryPayload<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
     name: "UsageHistory"
@@ -12575,6 +12597,8 @@ export namespace Prisma {
       connectionId: string | null
       apiKey: string | null
       endpoint: string | null
+      userId: string | null
+      projectId: string | null
       promptTokens: number
       completionTokens: number
       cost: number
@@ -13011,6 +13035,8 @@ export namespace Prisma {
     readonly connectionId: FieldRef<"UsageHistory", 'String'>
     readonly apiKey: FieldRef<"UsageHistory", 'String'>
     readonly endpoint: FieldRef<"UsageHistory", 'String'>
+    readonly userId: FieldRef<"UsageHistory", 'String'>
+    readonly projectId: FieldRef<"UsageHistory", 'String'>
     readonly promptTokens: FieldRef<"UsageHistory", 'Int'>
     readonly completionTokens: FieldRef<"UsageHistory", 'Int'>
     readonly cost: FieldRef<"UsageHistory", 'Float'>
@@ -17635,6 +17661,8 @@ export namespace Prisma {
     connectionId: 'connectionId',
     apiKey: 'apiKey',
     endpoint: 'endpoint',
+    userId: 'userId',
+    projectId: 'projectId',
     promptTokens: 'promptTokens',
     completionTokens: 'completionTokens',
     cost: 'cost',
@@ -18415,6 +18443,8 @@ export namespace Prisma {
     connectionId?: StringNullableFilter<"UsageHistory"> | string | null
     apiKey?: StringNullableFilter<"UsageHistory"> | string | null
     endpoint?: StringNullableFilter<"UsageHistory"> | string | null
+    userId?: StringNullableFilter<"UsageHistory"> | string | null
+    projectId?: StringNullableFilter<"UsageHistory"> | string | null
     promptTokens?: IntFilter<"UsageHistory"> | number
     completionTokens?: IntFilter<"UsageHistory"> | number
     cost?: FloatFilter<"UsageHistory"> | number
@@ -18431,6 +18461,8 @@ export namespace Prisma {
     connectionId?: SortOrderInput | SortOrder
     apiKey?: SortOrderInput | SortOrder
     endpoint?: SortOrderInput | SortOrder
+    userId?: SortOrderInput | SortOrder
+    projectId?: SortOrderInput | SortOrder
     promptTokens?: SortOrder
     completionTokens?: SortOrder
     cost?: SortOrder
@@ -18450,6 +18482,8 @@ export namespace Prisma {
     connectionId?: StringNullableFilter<"UsageHistory"> | string | null
     apiKey?: StringNullableFilter<"UsageHistory"> | string | null
     endpoint?: StringNullableFilter<"UsageHistory"> | string | null
+    userId?: StringNullableFilter<"UsageHistory"> | string | null
+    projectId?: StringNullableFilter<"UsageHistory"> | string | null
     promptTokens?: IntFilter<"UsageHistory"> | number
     completionTokens?: IntFilter<"UsageHistory"> | number
     cost?: FloatFilter<"UsageHistory"> | number
@@ -18466,6 +18500,8 @@ export namespace Prisma {
     connectionId?: SortOrderInput | SortOrder
     apiKey?: SortOrderInput | SortOrder
     endpoint?: SortOrderInput | SortOrder
+    userId?: SortOrderInput | SortOrder
+    projectId?: SortOrderInput | SortOrder
     promptTokens?: SortOrder
     completionTokens?: SortOrder
     cost?: SortOrder
@@ -18490,6 +18526,8 @@ export namespace Prisma {
     connectionId?: StringNullableWithAggregatesFilter<"UsageHistory"> | string | null
     apiKey?: StringNullableWithAggregatesFilter<"UsageHistory"> | string | null
     endpoint?: StringNullableWithAggregatesFilter<"UsageHistory"> | string | null
+    userId?: StringNullableWithAggregatesFilter<"UsageHistory"> | string | null
+    projectId?: StringNullableWithAggregatesFilter<"UsageHistory"> | string | null
     promptTokens?: IntWithAggregatesFilter<"UsageHistory"> | number
     completionTokens?: IntWithAggregatesFilter<"UsageHistory"> | number
     cost?: FloatWithAggregatesFilter<"UsageHistory"> | number
@@ -19391,6 +19429,8 @@ export namespace Prisma {
     connectionId?: string | null
     apiKey?: string | null
     endpoint?: string | null
+    userId?: string | null
+    projectId?: string | null
     promptTokens?: number
     completionTokens?: number
     cost?: number
@@ -19407,6 +19447,8 @@ export namespace Prisma {
     connectionId?: string | null
     apiKey?: string | null
     endpoint?: string | null
+    userId?: string | null
+    projectId?: string | null
     promptTokens?: number
     completionTokens?: number
     cost?: number
@@ -19422,6 +19464,8 @@ export namespace Prisma {
     connectionId?: NullableStringFieldUpdateOperationsInput | string | null
     apiKey?: NullableStringFieldUpdateOperationsInput | string | null
     endpoint?: NullableStringFieldUpdateOperationsInput | string | null
+    userId?: NullableStringFieldUpdateOperationsInput | string | null
+    projectId?: NullableStringFieldUpdateOperationsInput | string | null
     promptTokens?: IntFieldUpdateOperationsInput | number
     completionTokens?: IntFieldUpdateOperationsInput | number
     cost?: FloatFieldUpdateOperationsInput | number
@@ -19438,6 +19482,8 @@ export namespace Prisma {
     connectionId?: NullableStringFieldUpdateOperationsInput | string | null
     apiKey?: NullableStringFieldUpdateOperationsInput | string | null
     endpoint?: NullableStringFieldUpdateOperationsInput | string | null
+    userId?: NullableStringFieldUpdateOperationsInput | string | null
+    projectId?: NullableStringFieldUpdateOperationsInput | string | null
     promptTokens?: IntFieldUpdateOperationsInput | number
     completionTokens?: IntFieldUpdateOperationsInput | number
     cost?: FloatFieldUpdateOperationsInput | number
@@ -19454,6 +19500,8 @@ export namespace Prisma {
     connectionId?: string | null
     apiKey?: string | null
     endpoint?: string | null
+    userId?: string | null
+    projectId?: string | null
     promptTokens?: number
     completionTokens?: number
     cost?: number
@@ -19469,6 +19517,8 @@ export namespace Prisma {
     connectionId?: NullableStringFieldUpdateOperationsInput | string | null
     apiKey?: NullableStringFieldUpdateOperationsInput | string | null
     endpoint?: NullableStringFieldUpdateOperationsInput | string | null
+    userId?: NullableStringFieldUpdateOperationsInput | string | null
+    projectId?: NullableStringFieldUpdateOperationsInput | string | null
     promptTokens?: IntFieldUpdateOperationsInput | number
     completionTokens?: IntFieldUpdateOperationsInput | number
     cost?: FloatFieldUpdateOperationsInput | number
@@ -19485,6 +19535,8 @@ export namespace Prisma {
     connectionId?: NullableStringFieldUpdateOperationsInput | string | null
     apiKey?: NullableStringFieldUpdateOperationsInput | string | null
     endpoint?: NullableStringFieldUpdateOperationsInput | string | null
+    userId?: NullableStringFieldUpdateOperationsInput | string | null
+    projectId?: NullableStringFieldUpdateOperationsInput | string | null
     promptTokens?: IntFieldUpdateOperationsInput | number
     completionTokens?: IntFieldUpdateOperationsInput | number
     cost?: FloatFieldUpdateOperationsInput | number
@@ -20324,6 +20376,8 @@ export namespace Prisma {
     connectionId?: SortOrder
     apiKey?: SortOrder
     endpoint?: SortOrder
+    userId?: SortOrder
+    projectId?: SortOrder
     promptTokens?: SortOrder
     completionTokens?: SortOrder
     cost?: SortOrder
@@ -20347,6 +20401,8 @@ export namespace Prisma {
     connectionId?: SortOrder
     apiKey?: SortOrder
     endpoint?: SortOrder
+    userId?: SortOrder
+    projectId?: SortOrder
     promptTokens?: SortOrder
     completionTokens?: SortOrder
     cost?: SortOrder
@@ -20361,6 +20417,8 @@ export namespace Prisma {
     connectionId?: SortOrder
     apiKey?: SortOrder
     endpoint?: SortOrder
+    userId?: SortOrder
+    projectId?: SortOrder
     promptTokens?: SortOrder
     completionTokens?: SortOrder
     cost?: SortOrder

@@ -218,6 +218,8 @@ exports.Prisma.UsageHistoryScalarFieldEnum = {
   connectionId: 'connectionId',
   apiKey: 'apiKey',
   endpoint: 'endpoint',
+  userId: 'userId',
+  projectId: 'projectId',
   promptTokens: 'promptTokens',
   completionTokens: 'completionTokens',
   cost: 'cost',
