@@ -161,6 +161,21 @@ export async function createProviderConnection(data) {
     }
 
     if (existing) {
+      // Name collision on an apikey connection used to silently replace the
+      // stored apiKey, so a script that reused names ("Key 1", "Key 2", …)
+      // destroyed existing pool entries with no 409 and no warning. Callers that
+      // genuinely mean "update this one" pass allowOverwrite; everyone else gets
+      // a typed error naming the row that would have been replaced. #4311
+      if (data.allowOverwrite === false) {
+        const err = new Error(
+          `A connection named "${existing.name}" already exists for provider "${data.provider}". ` +
+          `Pass allowOverwrite: true to replace it.`
+        );
+        err.code = "PROVIDER_NAME_CONFLICT";
+        err.existingId = existing.id;
+        err.existingName = existing.name;
+        throw err;
+      }
       const normalized = resetHealthStateOnActivation(existing, data);
       const merged = { ...existing, ...normalized, updatedAt: now };
       await upsertConn(tx, merged);
@@ -169,11 +184,15 @@ export async function createProviderConnection(data) {
 
     let connectionName = data.name || null;
     if (!connectionName && (data.authType === "oauth" || data.authType === "access_token")) {
-      connectionName = deriveConnectionName(data, data.email || `Account ${all.length + 1}`);
+      connectionName = deriveConnectionName(data, data.email || `Account ${poolSize + 1}`);
     }
     let connectionPriority = data.priority;
     if (!connectionPriority) {
-      connectionPriority = all.reduce((m, c) => Math.max(m, c.priority || 0), 0) + 1;
+      // MAX(priority)+1 in SQL rather than a reduce over the loaded pool: the
+      // apikey path no longer has the whole pool in memory, and the aggregate
+      // is served by the index instead of a row scan. #4311
+      const maxRow = db.get(`SELECT MAX(priority) AS m FROM providerConnections WHERE provider = ?`, [data.provider]);
+      connectionPriority = (maxRow?.m || 0) + 1;
     }
 
     const conn = {
