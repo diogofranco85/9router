@@ -184,15 +184,11 @@ export async function createProviderConnection(data) {
 
     let connectionName = data.name || null;
     if (!connectionName && (data.authType === "oauth" || data.authType === "access_token")) {
-      connectionName = deriveConnectionName(data, data.email || `Account ${poolSize + 1}`);
+      connectionName = deriveConnectionName(data, data.email || `Account ${all.length + 1}`);
     }
     let connectionPriority = data.priority;
     if (!connectionPriority) {
-      // MAX(priority)+1 in SQL rather than a reduce over the loaded pool: the
-      // apikey path no longer has the whole pool in memory, and the aggregate
-      // is served by the index instead of a row scan. #4311
-      const maxRow = db.get(`SELECT MAX(priority) AS m FROM providerConnections WHERE provider = ?`, [data.provider]);
-      connectionPriority = (maxRow?.m || 0) + 1;
+      connectionPriority = all.reduce((m, c) => Math.max(m, c.priority || 0), 0) + 1;
     }
 
     const conn = {
